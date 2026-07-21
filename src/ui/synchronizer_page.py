@@ -1077,8 +1077,9 @@ class SynchronizerPage(QWidget):
             """
             result = self._build_prompt_text()
             if result is None:
-                self._mw.toast_overlay.show_toast(
-                    "warning", "没有可用的歌词正文（需要带时间戳的歌词行）"
+                QMessageBox.warning(
+                    dialog, "无法翻译",
+                    "没有可用的歌词正文（需要带时间戳的歌词行）。"
                 )
                 return
 
@@ -1315,8 +1316,8 @@ class SynchronizerPage(QWidget):
                 btn_copy.clicked.connect(
                     lambda: (
                         QApplication.clipboard().setText(rd_edit.toPlainText()),
-                        self._mw.toast_overlay.show_toast(
-                            "success", "翻译结果已复制到剪贴板"
+                        QMessageBox.information(
+                            rd, "已复制", "翻译结果已复制到剪贴板。"
                         ),
                     )
                 )
@@ -1362,8 +1363,9 @@ class SynchronizerPage(QWidget):
 
                 if target_text_edit is not None:
                     target_text_edit.setPlainText(text)
-                    self._mw.toast_overlay.show_toast(
-                        "success", "翻译结果已填入，请检查并点击「匹配」"
+                    QMessageBox.information(
+                        None, "已填入",
+                        "翻译结果已填入模式匹配输入框，请检查后点击「匹配」。"
                     )
                 else:
                     QTimer.singleShot(
