@@ -1166,10 +1166,33 @@ class SynchronizerPage(QWidget):
                 progress.deleteLater()
 
                 if _api_error[0]:
-                    QMessageBox.critical(
-                        dialog, "API 调用失败",
-                        f"请求失败：\n{_api_error[0]}"
+                    err_msg = _api_error[0]
+                    # Build a helpful diagnostic message
+                    masked_key = api_key[:8] + "****" + api_key[-4:] if len(api_key) > 12 else "****"
+                    detail = (
+                        f"错误：{err_msg}\n\n"
+                        f"当前配置：\n"
+                        f"  名称：{cfg.get('name', '?')}\n"
+                        f"  URL ：{api_url}\n"
+                        f"  Key ：{masked_key}\n"
+                        f"  Model：{model}\n\n"
                     )
+                    if "401" in err_msg or "Unauthorized" in err_msg:
+                        detail += (
+                            "401 表示 API Key 无效或未授权。请检查：\n"
+                            "  ● Key 是否已过期或被删除\n"
+                            "  ● Key 是否有该模型的调用权限\n"
+                            "  ● URL 是否与 Key 所属平台一致"
+                        )
+                    elif "404" in err_msg or "Not Found" in err_msg:
+                        detail += (
+                            "404 表示端点或模型不存在。请检查：\n"
+                            "  ● API URL 是否正确\n"
+                            "  ● Model 名称是否拼写正确"
+                        )
+                    else:
+                        detail += "请检查网络连接、URL 和 Key 是否正确。"
+                    QMessageBox.critical(dialog, "API 调用失败", detail)
                     return
 
                 response_text = _api_result[0]
