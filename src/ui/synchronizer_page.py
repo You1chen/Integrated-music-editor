@@ -1565,16 +1565,6 @@ class SynchronizerPage(QWidget):
             btn_row = QHBoxLayout()
             btn_row.setSpacing(8)
 
-            btn_test = QPushButton("测试连接")
-            btn_test.setStyleSheet(
-                "QPushButton {"
-                "  font-size: 13px; padding: 8px 16px; border: 1px solid #aaa;"
-                "  border-radius: 4px;"
-                "}"
-                "QPushButton:hover { border-color: #58a6ff; color: #58a6ff; }"
-            )
-            btn_row.addWidget(btn_test)
-
             btn_row.addStretch()
 
             btn_cancel = QPushButton("取消")
@@ -1588,29 +1578,33 @@ class SynchronizerPage(QWidget):
             btn_cancel.clicked.connect(lambda: api_substack.setCurrentIndex(0))
             btn_row.addWidget(btn_cancel)
 
-            btn_save = QPushButton("保存配置")
-            btn_save.setStyleSheet(
+            btn_test_save = QPushButton("测试并保存")
+            btn_test_save.setStyleSheet(
                 "QPushButton {"
                 "  font-size: 13px; padding: 8px 16px; border: 2px solid #58a6ff;"
                 "  border-radius: 4px; color: #58a6ff; font-weight: bold;"
                 "}"
                 "QPushButton:hover { background-color: rgba(88,166,255,0.15); }"
+                "QPushButton:disabled {"
+                "  border-color: #555; color: #666;"
+                "}"
             )
-            btn_row.addWidget(btn_save)
+            btn_row.addWidget(btn_test_save)
 
             outer.addLayout(btn_row)
 
-            # ── Test connection ──
-            def _test_connection() -> None:
+            # ── Test → Save (test success required to save) ──
+            def _test_and_save() -> None:
+                name = name_input.text().strip()
                 u = url_input.text().strip()
                 k = key_input.text().strip()
                 m = model_input.text().strip()
-                if not u or not k:
-                    _show_feedback("请先填写 API URL 和 Key", True)
+                if not name or not u or not k or not m:
+                    _show_feedback("请填写完整的名称、URL、Key 和 Model", True)
                     return
 
-                btn_test.setEnabled(False)
-                btn_test.setText("测试中…")
+                btn_test_save.setEnabled(False)
+                btn_test_save.setText("测试中…")
                 feedback.hide()
 
                 def _do_test() -> None:
@@ -1631,48 +1625,35 @@ class SynchronizerPage(QWidget):
                         QTimer.singleShot(0, lambda: _on_test_result(False, str(e)))
 
                 def _on_test_result(ok: bool, msg: str) -> None:
-                    btn_test.setEnabled(True)
-                    btn_test.setText("测试连接")
-                    _show_feedback(msg, is_error=not ok)
+                    btn_test_save.setEnabled(True)
+                    btn_test_save.setText("测试并保存")
+                    if ok:
+                        # Test passed → save with the exact values that were tested
+                        if edit_index is not None:
+                            configs = self._mw.config.get_api_configs()
+                            if 0 <= edit_index < len(configs):
+                                configs[edit_index] = {
+                                    "name": name, "url": u,
+                                    "api_key": k, "model": m,
+                                }
+                                raw_cfg = self._mw.config._load_config()
+                                raw_cfg["apiConfigs"] = []
+                                self._mw.config._save_config()
+                                for c in configs:
+                                    self._mw.config.add_api_config(
+                                        c["name"], c["url"],
+                                        c["api_key"], c["model"],
+                                    )
+                        else:
+                            self._mw.config.add_api_config(name, u, k, m)
+                        _show_feedback("连接成功，配置已加密保存 ✓")
+                        QTimer.singleShot(800, _build_model_list)
+                    else:
+                        _show_feedback(f"连接失败，未保存：{msg}", True)
 
                 threading.Thread(target=_do_test, daemon=True).start()
 
-            btn_test.clicked.connect(_test_connection)
-
-            # ── Save config ──
-            def _save_config() -> None:
-                name = name_input.text().strip()
-                u = url_input.text().strip()
-                k = key_input.text().strip()
-                m = model_input.text().strip()
-                if not name or not u or not k or not m:
-                    _show_feedback("请填写完整的名称、URL、Key 和 Model", True)
-                    return
-
-                if edit_index is not None:
-                    # Replace existing config
-                    configs = self._mw.config.get_api_configs()
-                    if 0 <= edit_index < len(configs):
-                        configs[edit_index] = {
-                            "name": name, "url": u, "api_key": k, "model": m
-                        }
-                        # Remove old, re-add all
-                        self._mw.config._load_config()
-                        raw_cfg = self._mw.config._load_config()
-                        raw_cfg["apiConfigs"] = []
-                        self._mw.config._save_config()
-                        for c in configs:
-                            self._mw.config.add_api_config(
-                                c["name"], c["url"], c["api_key"], c["model"]
-                            )
-                else:
-                    self._mw.config.add_api_config(name, u, k, m)
-
-                _show_feedback("配置已加密保存 ✓")
-                # Rebuild model list and switch back after short delay
-                QTimer.singleShot(600, _build_model_list)
-
-            btn_save.clicked.connect(_save_config)
+            btn_test_save.clicked.connect(_test_and_save)
 
             api_substack.insertWidget(1, form_page)
 
