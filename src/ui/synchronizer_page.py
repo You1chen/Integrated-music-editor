@@ -1457,6 +1457,66 @@ class SynchronizerPage(QWidget):
                 )
                 row_layout.addWidget(btn_translate)
 
+                # Test button
+                btn_test = QPushButton("测")
+                btn_test.setFixedSize(28, 28)
+                btn_test.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_test.setToolTip("测试连接")
+                btn_test.setStyleSheet(
+                    "QPushButton {"
+                    "  font-size: 12px; border: 1px solid #666;"
+                    "  border-radius: 4px; color: #aaa;"
+                    "}"
+                    "QPushButton:hover {"
+                    "  border-color: #3fb950; color: #3fb950;"
+                    "}"
+                )
+
+                def _make_test_handler(
+                    btn: QPushButton, c: dict
+                ):
+                    def _handler() -> None:
+                        btn.setEnabled(False)
+                        btn.setText("…")
+                        def _work() -> None:
+                            try:
+                                body = json.dumps({
+                                    "model": c["model"],
+                                    "messages": [{"role": "user", "content": "Hi"}],
+                                    "max_tokens": 5,
+                                }).encode("utf-8")
+                                req = urllib.request.Request(
+                                    c["url"], data=body,
+                                    headers={
+                                        "Content-Type": "application/json",
+                                        "Authorization": f"Bearer {c['api_key']}",
+                                    },
+                                )
+                                with urllib.request.urlopen(req, timeout=10) as resp:
+                                    json.loads(resp.read().decode("utf-8"))
+                                QTimer.singleShot(0, lambda: _done(True, "✓"))
+                            except Exception as e:
+                                QTimer.singleShot(0, lambda: _done(False, str(e)))
+                        def _done(ok: bool, msg: str) -> None:
+                            btn.setEnabled(True)
+                            if ok:
+                                btn.setText("✓")
+                                btn.setStyleSheet(
+                                    btn.styleSheet().replace("color: #aaa", "color: #3fb950")
+                                )
+                                btn.setToolTip("连接成功")
+                            else:
+                                btn.setText("✗")
+                                btn.setStyleSheet(
+                                    btn.styleSheet().replace("color: #aaa", "color: #f85149")
+                                )
+                                btn.setToolTip(f"连接失败：{msg}")
+                        threading.Thread(target=_work, daemon=True).start()
+                    return _handler
+
+                btn_test.clicked.connect(_make_test_handler(btn_test, cfg))
+                row_layout.addWidget(btn_test)
+
                 # Delete button
                 btn_del = QPushButton("✕")
                 btn_del.setFixedSize(28, 28)
