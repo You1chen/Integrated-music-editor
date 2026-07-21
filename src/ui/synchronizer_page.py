@@ -1166,25 +1166,36 @@ class SynchronizerPage(QWidget):
                 progress.deleteLater()
 
                 if _api_error[0]:
-                    self._mw.toast_overlay.show_toast(
-                        "error", f"API 调用失败：{_api_error[0]}"
+                    QMessageBox.critical(
+                        dialog, "API 调用失败",
+                        f"请求失败：\n{_api_error[0]}"
                     )
                     return
 
                 response_text = _api_result[0]
                 if not response_text:
-                    self._mw.toast_overlay.show_toast("warning", "AI 返回了空内容")
+                    QMessageBox.warning(
+                        dialog, "AI 返回空内容",
+                        "API 调用成功但未返回任何翻译文本。"
+                    )
                     return
 
                 # ── Save to txt next to the LRC source file ──
-                out_path = _save_translation_txt(response_text)
+                ok, out_path = _save_translation_txt(response_text)
+                if not ok:
+                    QMessageBox.critical(
+                        dialog, "文件写入失败",
+                        f"无法写入翻译文件：\n{out_path}"
+                    )
+                    return
 
                 # ── "翻译成功" confirm dialog ──
                 _show_done(out_path)
 
-            def _save_translation_txt(text: str) -> str:
-                """Write the AI translation to a .lrc-translation.txt file
-                next to the current LRC source file. Returns the output path."""
+            def _save_translation_txt(text: str) -> "tuple[bool, str]":
+                """Write the AI translation to {stem}_translation.txt
+                next to the current LRC source file.
+                Returns (success, path)."""
                 lrc_path = self._mw.config.get_last_lrc_path()
                 if lrc_path:
                     stem = os.path.splitext(os.path.basename(lrc_path))[0]
@@ -1192,13 +1203,17 @@ class SynchronizerPage(QWidget):
                 else:
                     stem = "translation"
                     out_dir = os.path.expanduser("~")
-                out_path = os.path.join(out_dir, f"{stem}.lrc-translation.txt")
+                out_path = os.path.join(out_dir, f"{stem}_translation.txt")
                 try:
                     with open(out_path, "w", encoding="utf-8") as f:
                         f.write(text)
+                    # Verify it actually exists on disk
+                    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                        return True, out_path
+                    else:
+                        return False, out_path
                 except OSError:
-                    pass
-                return out_path
+                    return False, out_path
 
             def _show_done(txt_path: str) -> None:
                 """Simple confirm: 翻译成功 → 查看 / 取消."""
