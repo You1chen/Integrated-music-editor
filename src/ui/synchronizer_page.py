@@ -1176,8 +1176,28 @@ class SynchronizerPage(QWidget):
                     self._mw.toast_overlay.show_toast("warning", "AI 返回了空内容")
                     return
 
+                # ── Save to txt next to the LRC source file ──
+                _save_translation_txt(response_text)
+
                 # ── Result dialog: show full translation, let user decide ──
                 _show_result(response_text)
+
+            def _save_translation_txt(text: str) -> None:
+                """Write the AI translation to a .lrc-translation.txt file
+                in the same directory as the current LRC source file."""
+                lrc_path = self._mw.config.get_last_lrc_path()
+                if lrc_path:
+                    stem = os.path.splitext(os.path.basename(lrc_path))[0]
+                    out_dir = os.path.dirname(lrc_path)
+                else:
+                    stem = "translation"
+                    out_dir = os.path.expanduser("~")
+                out_path = os.path.join(out_dir, f"{stem}.lrc-translation.txt")
+                try:
+                    with open(out_path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                except OSError:
+                    pass  # not critical; result dialog still shows
 
             def _show_result(text: str) -> None:
                 """Show the complete AI translation in a popup with copy / fill buttons."""
