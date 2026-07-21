@@ -1,14 +1,13 @@
-"""Toast overlay — notification queue (replaces toast.tsx)."""
+"""Toast overlay — notification queue (replaces toast.tsx).
+
+Rendered as a top-level frameless window that stays above all other
+windows, including modal dialogs.  Repositions automatically when
+the main window moves or resizes.
+"""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import (
-    QPropertyAnimation,
-    QSequentialAnimationGroup,
-    Qt,
-    QTimer,
-    pyqtProperty,
-)
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -25,7 +24,6 @@ class ToastWidget(QFrame):
         super().__init__(parent)
         self.setObjectName(f"toast{toast_type.capitalize()}")
 
-        # Type-specific styling
         colors = {
             "info": ("#91d2fa", "#1b95e0"),
             "success": ("#19cf86", "#0d6b45"),
@@ -42,34 +40,40 @@ class ToastWidget(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
 
-        # Icon
         icons = {"info": "ℹ", "success": "✓", "warning": "⚠"}
         icon = QLabel(icons.get(toast_type, "ℹ"))
         icon.setStyleSheet(f"color: {bg}; font-size: 16px; font-weight: bold;")
         layout.addWidget(icon)
 
-        # Text
         label = QLabel(text)
         label.setWordWrap(True)
         label.setStyleSheet("color: #eee;")
         layout.addWidget(label, stretch=1)
 
-        # Close button
         close_btn = QLabel("✕")
         close_btn.setStyleSheet("color: #888;")
         close_btn.mousePressEvent = lambda ev: self.hide()
         layout.addWidget(close_btn)
 
+
 class ToastOverlay(QWidget):
     """Overlay that shows a queue of toast notifications.
 
-    Hidden when empty, shown only when at least one toast is active.
-    This avoids a black rectangle artifact on Windows where child-widget
-    transparency attributes have no effect.
+    A top-level frameless tool window that stays on top of everything
+    (including modal dialogs).  Follows the main window position.
     """
 
-    def __init__(self, parent: QWidget) -> None:
-        super().__init__(parent)
+    def __init__(self, main_window: QWidget) -> None:
+        super().__init__(None)  # top-level — no parent
+        self._main = main_window
+
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedWidth(320)
 
         layout = QVBoxLayout(self)
@@ -78,12 +82,27 @@ class ToastOverlay(QWidget):
         layout.addStretch()
 
         self._toasts: list[ToastWidget] = []
-        self.hide()  # start invisible — no toasts yet
+
+        # Track main window moves
+        main_window.installEventFilter(self)
+        self.hide()
+
+    # ── Tracking main window ────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        """Follow the main window when it moves or resizes."""
+        from PyQt6.QtCore import QEvent
+        if obj is self._main and event.type() in (
+            QEvent.Type.Move, QEvent.Type.Resize,
+        ):
+            self._reposition()
+        return super().eventFilter(obj, event)
+
+    # ── Toast API ───────────────────────────────────────────
 
     def show_toast(self, toast_type: str, text: str) -> None:
         """Add a toast notification to the queue."""
         toast = ToastWidget(toast_type, text, self)
-        # Insert at the top of the layout
         layout = self.layout()
         if layout:
             layout.insertWidget(0, toast)
@@ -91,11 +110,10 @@ class ToastOverlay(QWidget):
 
         self._toasts.append(toast)
 
-        # Auto-dismiss after 3 seconds
         QTimer.singleShot(3000, lambda: self._dismiss(toast))
 
-        self.show()  # make overlay visible
         self._reposition()
+        self.show()
 
     def _dismiss(self, toast: ToastWidget) -> None:
         """Hide and remove a toast. Hide overlay if it was the last one."""
@@ -104,15 +122,12 @@ class ToastOverlay(QWidget):
         if toast in self._toasts:
             self._toasts.remove(toast)
         if not self._toasts:
-            self.hide()  # nothing left → disappear completely
+            self.hide()
+
+    # ── Positioning ─────────────────────────────────────────
 
     def _reposition(self) -> None:
-        """Position at top-right of parent window."""
-        parent = self.parentWidget()
-        if parent:
-            pw = parent.width()
-            self.move(pw - self.width() - 16, 52)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._reposition()
+        """Position at top-right of the main window."""
+        if self._main:
+            pt = self._main.mapToGlobal(self._main.rect().topRight())
+            self.move(pt.x() - self.width() - 16, pt.y() + 52)
