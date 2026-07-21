@@ -8,6 +8,8 @@ from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import QStandardPaths
 
+from .crypto_utils import encrypt, decrypt
+
 
 class ConfigManager:
     """Manages persistent and session-scoped application configuration.
@@ -310,3 +312,36 @@ class ConfigManager:
         cfg = self._load_config()
         cfg["keybindings"] = data
         self._save_config()
+
+    # ── Persistent: API Config (encrypted) ──────────────────
+
+    def get_api_config(self) -> Dict[str, str]:
+        """Get decrypted API configuration.
+
+        Returns ``{"url": "", "api_key": "", "model": ""}``.
+        Empty strings mean the field is not configured.
+        """
+        raw = self._load_config().get("apiConfig", {})
+        result: Dict[str, str] = {}
+        for field in ("url", "api_key", "model"):
+            ciphertext = raw.get(field, "")
+            try:
+                result[field] = decrypt(ciphertext) if ciphertext else ""
+            except Exception:
+                result[field] = ""
+        return result
+
+    def set_api_config(self, url: str, api_key: str, model: str) -> None:
+        """Encrypt and persist API configuration."""
+        cfg = self._load_config()
+        cfg["apiConfig"] = {
+            "url": encrypt(url) if url else "",
+            "api_key": encrypt(api_key) if api_key else "",
+            "model": encrypt(model) if model else "",
+        }
+        self._save_config()
+
+    def has_api_config(self) -> bool:
+        """Return True when all three API fields are configured."""
+        c = self.get_api_config()
+        return bool(c.get("url") and c.get("api_key") and c.get("model"))

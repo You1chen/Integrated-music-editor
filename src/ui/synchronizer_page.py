@@ -6,9 +6,13 @@ lets the user insert/remove timestamps while audio plays, using keyboard shortcu
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
+import tempfile
+import threading
+import urllib.request
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QSize, Qt, QTimer, QUrl, pyqtSignal
@@ -815,13 +819,6 @@ class SynchronizerPage(QWidget):
         self._btn_translate.clicked.connect(self._on_translate_toggle)
         toolbar.addWidget(self._btn_translate)
 
-        # AI assist button (only visible in translation mode)
-        self._btn_ai_assist = QPushButton("AI辅助")
-        self._btn_ai_assist.setToolTip("AI 辅助翻译工具")
-        self._btn_ai_assist.clicked.connect(self._on_ai_assist)
-        self._btn_ai_assist.hide()
-        toolbar.addWidget(self._btn_ai_assist)
-
         # Pattern match button (only visible in translation mode)
         self._btn_pattern_match = QPushButton("模式匹配")
         self._btn_pattern_match.setToolTip("从粘贴的翻译文本中匹配翻译")
@@ -902,7 +899,6 @@ class SynchronizerPage(QWidget):
     def _on_translate_toggle(self) -> None:
         """Toggle translation editing mode on/off."""
         self._translation_mode = self._btn_translate.isChecked()
-        self._btn_ai_assist.setVisible(self._translation_mode)
         self._btn_pattern_match.setVisible(self._translation_mode)
         self._rebuild_all()
 
@@ -918,8 +914,14 @@ class SynchronizerPage(QWidget):
         """User finished editing (Enter / focus loss) — push one undo snapshot."""
         self._mw.lrc_state._push_undo()
 
-    def _on_ai_assist(self) -> None:
-        """Open the AI assist dialog with two options for translation help."""
+    def _on_ai_assist(
+        self, target_text_edit: QPlainTextEdit | None = None
+    ) -> None:
+        """Open the AI assist dialog with two options for translation help.
+
+        When *target_text_edit* is provided, API auto results fill that
+        widget directly instead of opening a new pattern-match dialog.
+        """
         dialog = QDialog(self)
         dialog.setWindowTitle("AI 辅助翻译")
         dialog.resize(500, 400)
@@ -962,14 +964,18 @@ class SynchronizerPage(QWidget):
         btn_chat.clicked.connect(lambda: stack.setCurrentIndex(1))
         options_layout.addWidget(btn_chat)
 
-        btn_api = QPushButton("🤖  API 自动（功能待定）")
-        btn_api.setEnabled(False)
+        btn_api = QPushButton("🤖  API 自动")
         btn_api.setStyleSheet(
             "QPushButton {"
-            "  font-size: 15px; padding: 16px; border: 2px solid #555;"
-            "  border-radius: 8px; text-align: left; color: #888;"
+            "  font-size: 15px; padding: 16px; border: 2px solid #aaa;"
+            "  border-radius: 8px; text-align: left;"
+            "}"
+            "QPushButton:hover {"
+            "  border-color: #58a6ff; background-color: rgba(88,166,255,0.1);"
             "}"
         )
+        btn_api.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_api.clicked.connect(lambda: stack.setCurrentIndex(2))
         options_layout.addWidget(btn_api)
 
         options_layout.addStretch()
@@ -1045,7 +1051,7 @@ class SynchronizerPage(QWidget):
         chat_layout.addStretch()
         stack.addWidget(chat_page)  # index 1
 
-        # ── Page 2: API auto placeholder ──
+        # ── Page 2: API auto ──
         api_page = QWidget()
         api_layout = QVBoxLayout(api_page)
         api_layout.setContentsMargins(0, 0, 0, 0)
@@ -1057,25 +1063,316 @@ class SynchronizerPage(QWidget):
         btn_back2.clicked.connect(lambda: stack.setCurrentIndex(0))
         api_layout.addWidget(btn_back2)
 
+        # Sub-stack: config form (0) vs translate action (1)
+        api_substack = QStackedWidget()
+        api_layout.addWidget(api_substack, stretch=1)
         api_layout.addStretch()
-        placeholder = QLabel("API 自动翻译功能开发中，敬请期待…")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet("font-size: 14px; color: #888;")
-        api_layout.addWidget(placeholder)
-        api_layout.addStretch()
+
+        # ── API sub-page 0: Config form ──
+        config_page = QWidget()
+        config_layout = QVBoxLayout(config_page)
+        config_layout.setContentsMargins(4, 8, 4, 0)
+        config_layout.setSpacing(10)
+
+        cfg_hint = QLabel("配置 OpenAI 兼容的 API 端点（密钥将加密存储）")
+        cfg_hint.setStyleSheet("font-size: 12px; color: #888;")
+        cfg_hint.setWordWrap(True)
+        config_layout.addWidget(cfg_hint)
+
+        # URL
+        url_label = QLabel("API URL")
+        url_label.setStyleSheet("font-size: 13px; font-weight: bold;")
+        config_layout.addWidget(url_label)
+        url_input = QLineEdit()
+        url_input.setPlaceholderText("https://api.deepseek.com/v1/chat/completions")
+        url_input.setFont(QFont("Consolas", 11))
+        config_layout.addWidget(url_input)
+
+        # API Key
+        key_label = QLabel("API Key")
+        key_label.setStyleSheet("font-size: 13px; font-weight: bold;")
+        config_layout.addWidget(key_label)
+        key_input = QLineEdit()
+        key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        key_input.setPlaceholderText("sk-…")
+        key_input.setFont(QFont("Consolas", 11))
+        config_layout.addWidget(key_input)
+
+        # Model
+        model_label = QLabel("Model")
+        model_label.setStyleSheet("font-size: 13px; font-weight: bold;")
+        config_layout.addWidget(model_label)
+        model_input = QLineEdit()
+        model_input.setPlaceholderText("deepseek-chat")
+        model_input.setFont(QFont("Consolas", 11))
+        config_layout.addWidget(model_input)
+
+        config_layout.addStretch()
+
+        btn_save_config = QPushButton("保存配置")
+        btn_save_config.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 14px; padding: 10px; border: 2px solid #58a6ff;"
+            "  border-radius: 6px; color: #58a6ff; font-weight: bold;"
+            "}"
+            "QPushButton:hover { background-color: rgba(88,166,255,0.15); }"
+        )
+        config_layout.addWidget(btn_save_config)
+
+        api_substack.addWidget(config_page)  # api_sub index 0
+
+        # ── API sub-page 1: Translate action ──
+        translate_page = QWidget()
+        translate_layout = QVBoxLayout(translate_page)
+        translate_layout.setContentsMargins(4, 8, 4, 0)
+        translate_layout.setSpacing(10)
+
+        status_label = QLabel()
+        status_label.setStyleSheet("font-size: 13px; color: #888;")
+        status_label.setWordWrap(True)
+        translate_layout.addWidget(status_label)
+
+        translate_layout.addStretch()
+
+        btn_start_translate = QPushButton("🚀  开始翻译")
+        btn_start_translate.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 15px; padding: 14px; border: 2px solid #58a6ff;"
+            "  border-radius: 8px; color: #58a6ff; font-weight: bold;"
+            "}"
+            "QPushButton:hover { background-color: rgba(88,166,255,0.15); }"
+        )
+        translate_layout.addWidget(btn_start_translate)
+
+        btn_reconfig = QPushButton("重新配置")
+        btn_reconfig.setFlat(True)
+        btn_reconfig.setCursor(Qt.CursorShape.PointingHandCursor)
+        translate_layout.addWidget(btn_reconfig)
+
+        api_substack.addWidget(translate_page)  # api_sub index 1
+
+        # ── Populate form if config exists ──
+        api_config = self._mw.config.get_api_config()
+        saved_url = api_config.get("url", "")
+        saved_key = api_config.get("api_key", "")
+        saved_model = api_config.get("model", "")
+
+        if saved_url:
+            url_input.setText(saved_url)
+        if saved_key:
+            key_input.setText(saved_key)
+        if saved_model:
+            model_input.setText(saved_model)
+
+        def _refresh_api_page() -> None:
+            """Switch between config form and translate action based on saved config."""
+            if self._mw.config.has_api_config():
+                cfg = self._mw.config.get_api_config()
+                key_masked = cfg["api_key"][:5] + "****" + cfg["api_key"][-3:] if len(cfg["api_key"]) > 8 else "****"
+                status_label.setText(
+                    f"API: {cfg['url']}\n"
+                    f"Key: {key_masked}\n"
+                    f"Model: {cfg['model']}"
+                )
+                api_substack.setCurrentIndex(1)
+            else:
+                api_substack.setCurrentIndex(0)
+
+        _refresh_api_page()
+
+        # ── Button handlers ──
+
+        def _save_api_config() -> None:
+            u = url_input.text().strip()
+            k = key_input.text().strip()
+            m = model_input.text().strip()
+            if not u or not k or not m:
+                self._mw.toast_overlay.show_toast("warning", "请填写完整的 API URL、Key 和 Model")
+                return
+            self._mw.config.set_api_config(u, k, m)
+            self._mw.toast_overlay.show_toast("success", "API 配置已加密保存")
+            _refresh_api_page()
+
+        btn_save_config.clicked.connect(_save_api_config)
+        btn_reconfig.clicked.connect(lambda: api_substack.setCurrentIndex(0))
+
+        def _start_translation() -> None:
+            """Build prompt, call AI API in background, feed result to pattern match."""
+            result = self._build_prompt_text()
+            if result is None:
+                self._mw.toast_overlay.show_toast(
+                    "warning", "没有可用的歌词正文（需要带时间戳的歌词行）"
+                )
+                return
+
+            prompt, line_count = result
+            cfg = self._mw.config.get_api_config()
+            api_url = cfg["url"]
+            api_key = cfg["api_key"]
+            model = cfg["model"]
+
+            # ── Progress dialog ──
+            progress = QDialog(dialog)
+            progress.setWindowTitle("API 自动翻译")
+            progress.setFixedSize(360, 130)
+            progress.setWindowFlags(
+                Qt.WindowType.Dialog
+                | Qt.WindowType.CustomizeWindowHint
+                | Qt.WindowType.WindowTitleHint
+            )
+            p_layout = QVBoxLayout(progress)
+            p_layout.setContentsMargins(20, 14, 20, 14)
+            p_layout.setSpacing(10)
+
+            p_label = QLabel(f"正在调用 AI 翻译（{line_count} 行歌词）…")
+            p_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            p_label.setStyleSheet("font-size: 13px;")
+            p_layout.addWidget(p_label)
+
+            # Animated dots
+            dots_label = QLabel()
+            dots_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dots_label.setTextFormat(Qt.TextFormat.RichText)
+            p_layout.addWidget(dots_label)
+
+            _dot_frame2 = [0]
+
+            def _anim_dots2() -> None:
+                parts: list[str] = []
+                for j in range(3):
+                    if j == _dot_frame2[0]:
+                        parts.append("<span style='font-size:150%;color:#ddd'>●</span>")
+                    else:
+                        parts.append("<span style='font-size:100%;color:#666'>●</span>")
+                dots_label.setText(" ".join(parts))
+                _dot_frame2[0] = (_dot_frame2[0] + 1) % 3
+
+            dots_timer2 = QTimer(progress)
+            dots_timer2.timeout.connect(_anim_dots2)
+            dots_timer2.start(280)
+            _anim_dots2()
+            progress.show()
+
+            # ── Background API call ──
+            _api_result: list[str | None] = [None]
+            _api_error: list[str | None] = [None]
+            _api_done = [False]
+            _cancel_requested = [False]
+
+            # Allow cancel
+            btn_cancel_api = QPushButton("取消")
+            btn_cancel_api.clicked.connect(lambda: _cancel_requested.__setitem__(0, True))
+            p_layout.addWidget(btn_cancel_api)
+
+            def _call_api() -> None:
+                if _cancel_requested[0]:
+                    return
+                try:
+                    body = json.dumps({
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                    }).encode("utf-8")
+
+                    req = urllib.request.Request(api_url, data=body, headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    })
+
+                    with urllib.request.urlopen(req, timeout=180) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+
+                    content = data["choices"][0]["message"]["content"]
+                    _api_result[0] = content
+                except Exception as e:
+                    _api_error[0] = str(e)
+                finally:
+                    _api_done[0] = True
+
+            threading.Thread(target=_call_api, daemon=True).start()
+
+            # ── Poll for completion ──
+            def _poll_api() -> None:
+                if not _api_done[0]:
+                    return
+                _poll_timer.stop()
+                dots_timer2.stop()
+                progress.accept()
+                progress.deleteLater()
+
+                if _api_error[0]:
+                    self._mw.toast_overlay.show_toast(
+                        "error", f"API 调用失败：{_api_error[0]}"
+                    )
+                    return
+
+                response_text = _api_result[0]
+                if not response_text:
+                    self._mw.toast_overlay.show_toast("warning", "AI 返回了空内容")
+                    return
+
+                # Save to temp txt, fill target / open pattern match, then clean up
+                try:
+                    fd, temp_path = tempfile.mkstemp(
+                        suffix=".txt", prefix="lrc_trans_"
+                    )
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(response_text)
+
+                    # Close the AI assist dialog
+                    dialog.accept()
+
+                    if target_text_edit is not None:
+                        # Fill the parent pattern-match dialog's text area directly
+                        target_text_edit.setPlainText(response_text)
+                        QTimer.singleShot(100, lambda: _cleanup_temp(temp_path))
+                        self._mw.toast_overlay.show_toast(
+                            "success", "翻译结果已填入，请检查并点击「匹配」"
+                        )
+                    else:
+                        # Open pattern match pre-filled with the response
+                        QTimer.singleShot(
+                            100,
+                            lambda: self._on_pattern_match(
+                                initial_text=response_text
+                            ),
+                        )
+                        QTimer.singleShot(
+                            200,
+                            lambda: _cleanup_temp(temp_path),
+                        )
+                except OSError as e:
+                    self._mw.toast_overlay.show_toast(
+                        "error", f"临时文件写入失败：{e}"
+                    )
+
+            def _cleanup_temp(path: str) -> None:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+            _poll_timer = QTimer(progress)
+            _poll_timer.timeout.connect(_poll_api)
+            _poll_timer.start(200)
+
+        btn_start_translate.clicked.connect(_start_translation)
+
         stack.addWidget(api_page)  # index 2
 
         dialog.exec()
 
-    def _generate_and_copy_prompt(self, parent_dialog: QDialog) -> None:
-        """Generate the AI translation prompt from current LRC lyrics and copy to clipboard."""
+    def _build_prompt_text(self) -> tuple[str, int] | None:
+        """Build the AI translation prompt from current LRC lyrics.
+
+        Returns ``(prompt_text, line_count)`` or ``None`` if no usable lyrics.
+        """
         state = self._mw.lrc_state
         prefs = self._mw.config.get_preferences()
         fixed: Fixed = prefs.get("fixed", 3)
 
         lines: list[str] = []
         for ln in state.lyric:
-            # Only include lines with timestamps and non-empty text
             if ln.time is None:
                 continue
             if not ln.text.strip():
@@ -1084,10 +1381,7 @@ class SynchronizerPage(QWidget):
             lines.append(f"{tag}{ln.text}")
 
         if not lines:
-            self._mw.toast_overlay.show_toast(
-                "warning", "没有可用的歌词正文（需要带时间戳的歌词行）"
-            )
-            return
+            return None
 
         lyrics_text = "\n".join(lines)
         prompt = (
@@ -1095,14 +1389,29 @@ class SynchronizerPage(QWidget):
             "请帮我翻译歌词，翻译给出和原文相同的时间戳，"
             "无时间戳的不必翻译，不必给出歌曲原文，要求翻译符合全文逻辑"
         )
+        return prompt, len(lines)
 
+    def _generate_and_copy_prompt(self, parent_dialog: QDialog) -> None:
+        """Generate the AI translation prompt from current LRC lyrics and copy to clipboard."""
+        result = self._build_prompt_text()
+        if result is None:
+            self._mw.toast_overlay.show_toast(
+                "warning", "没有可用的歌词正文（需要带时间戳的歌词行）"
+            )
+            return
+
+        prompt, line_count = result
         QApplication.clipboard().setText(prompt)
         self._mw.toast_overlay.show_toast(
-            "success", f"提示词已复制到剪贴板（共 {len(lines)} 行歌词）"
+            "success", f"提示词已复制到剪贴板（共 {line_count} 行歌词）"
         )
 
-    def _on_pattern_match(self) -> None:
-        """Open a dialog where user pastes LRC text containing translations."""
+    def _on_pattern_match(self, initial_text: str = "") -> None:
+        """Open a dialog where user pastes LRC text containing translations.
+
+        When *initial_text* is provided, the text area is pre-filled with it
+        (used by AI auto-translate to feed the API response into matching).
+        """
         dialog = QDialog(self)
         dialog.setWindowTitle("模式匹配 - 匹配翻译")
         dialog.resize(700, 500)
@@ -1126,11 +1435,26 @@ class SynchronizerPage(QWidget):
         text_edit.setPlaceholderText("在此粘贴 LRC 文本…")
         text_edit.setFont(QFont("Consolas", 13))
         text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        if initial_text:
+            text_edit.setPlainText(initial_text)
         dlg_layout.addWidget(text_edit, stretch=1)
 
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
+
+        btn_ai_assist = QPushButton("AI辅助")
+        btn_ai_assist.setToolTip("通过 AI 聊天网站或 API 自动生成翻译")
+        btn_ai_assist.clicked.connect(lambda: self._on_ai_assist(target_text_edit=text_edit))
+        btn_ai_assist.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 13px; padding: 6px 14px; border: 1px solid #aaa;"
+            "  border-radius: 4px;"
+            "}"
+            "QPushButton:hover { border-color: #58a6ff; color: #58a6ff; }"
+        )
+        btn_layout.addWidget(btn_ai_assist)
+
         btn_cancel = QPushButton("取消")
         btn_cancel.clicked.connect(dialog.reject)
         btn_match = QPushButton("匹配")
