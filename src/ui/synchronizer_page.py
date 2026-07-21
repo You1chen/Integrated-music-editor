@@ -343,7 +343,8 @@ class _LyricRow(QFrame):
 
     def _exit_edit_mode(self, save: bool = True) -> None:
         """Leave edit mode, optionally saving changes."""
-        if save:
+        in_edit = self._display_stack.currentIndex() == 1
+        if save and in_edit:
             new_text = self._edit_input.text()
             if new_text != self._line.text:
                 self.lyric_text_changed.emit(self._index, new_text)
