@@ -336,6 +336,11 @@ class _LyricRow(QFrame):
         self._edit_input.setFocus()
         self._edit_input.selectAll()
 
+    def exit_edit_mode(self) -> None:
+        """Public entry point — exit both edit and split modes."""
+        self._exit_edit_mode(save=True)
+        self._exit_split_mode()
+
     def _exit_edit_mode(self, save: bool = True) -> None:
         """Leave edit mode, optionally saving changes."""
         if save:
@@ -2668,6 +2673,13 @@ class SynchronizerPage(QWidget):
             return
 
         state = self._mw.lrc_state
+
+        # Exit edit/split mode on the previously selected row when selection moves
+        cur = state.select_index
+        prev = getattr(self, "_prev_select_idx", -1)
+        if prev != cur and 0 <= prev < len(self._rows):
+            self._rows[prev].exit_edit_mode()
+        self._prev_select_idx = cur
         prefs = self._mw.config.get_preferences()
         fixed: Fixed = prefs.get("fixed", 3)
         space_start = prefs.get("spaceStart", 1)
@@ -2774,9 +2786,6 @@ class SynchronizerPage(QWidget):
         """User clicked the text area of a row → select it and set append target."""
         self._mw.lrc_state.select(lambda _: index)
         self._append_target_index = index
-        # Steal focus back so that keyboard shortcuts (Space, etc.)
-        # are handled by SynchronizerPage.keyPressEvent rather than
-        # being swallowed by whatever child widget currently has focus.
         self.setFocus()
 
     def _on_edit_lyric(self, index: int) -> None:
