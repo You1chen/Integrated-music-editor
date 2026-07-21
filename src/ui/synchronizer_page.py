@@ -1253,7 +1253,8 @@ class SynchronizerPage(QWidget):
                 done.exec()
 
             def _show_result(text: str) -> None:
-                """Show the complete AI translation with copy / fill buttons."""
+                """Editable dialog showing the full AI translation,
+                same style as the '编辑歌词文本' dialog."""
                 rd = QDialog()
                 rd.setWindowTitle("翻译结果 — " + cfg.get("name", "API"))
                 rd.resize(700, 500)
@@ -1265,15 +1266,14 @@ class SynchronizerPage(QWidget):
 
                 rd_edit = QPlainTextEdit()
                 rd_edit.setPlainText(text)
-                rd_edit.setFont(QFont("Consolas", 12))
+                rd_edit.setFont(QFont("Consolas", 13))
                 rd_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-                rd_edit.setReadOnly(True)
                 rd_layout.addWidget(rd_edit, stretch=1)
 
                 rd_btns = QHBoxLayout()
                 rd_btns.setSpacing(8)
 
-                btn_copy = QPushButton("📋  复制全部")
+                btn_copy = QPushButton("复制")
                 btn_copy.clicked.connect(
                     lambda: (
                         QApplication.clipboard().setText(rd_edit.toPlainText()),
@@ -1296,7 +1296,7 @@ class SynchronizerPage(QWidget):
                     "}"
                 )
                 btn_fill.clicked.connect(
-                    lambda: _fill_pattern_match(rd_edit.toPlainText())
+                    lambda: _fill_pattern_match(rd, rd_edit.toPlainText())
                 )
                 rd_btns.addWidget(btn_fill)
 
@@ -1308,9 +1308,20 @@ class SynchronizerPage(QWidget):
                 rd_layout.addLayout(rd_btns)
                 rd.exec()
 
-            def _fill_pattern_match(text: str) -> None:
-                """Feed the translation text into the pattern match dialog."""
-                dialog.accept()  # close AI assist dialog
+            def _fill_pattern_match(
+                result_dialog: QDialog, text: str
+            ) -> None:
+                """Save edits back to txt, close dialogs, fill pattern match."""
+                # Save any user edits back to the txt file
+                try:
+                    with open(txt_path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                except OSError:
+                    pass
+
+                result_dialog.accept()  # close result dialog
+                dialog.accept()         # close AI assist dialog
+
                 if target_text_edit is not None:
                     target_text_edit.setPlainText(text)
                     self._mw.toast_overlay.show_toast(
