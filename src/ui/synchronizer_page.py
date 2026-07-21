@@ -949,7 +949,7 @@ class SynchronizerPage(QWidget):
         options_layout.setSpacing(12)
         options_layout.addStretch()
 
-        btn_chat = QPushButton("💬  模型聊天网站")
+        btn_chat = QPushButton("模型聊天网站")
         btn_chat.setStyleSheet(
             "QPushButton {"
             "  font-size: 15px; padding: 16px; border: 2px solid #aaa;"
@@ -963,7 +963,7 @@ class SynchronizerPage(QWidget):
         btn_chat.clicked.connect(lambda: stack.setCurrentIndex(1))
         options_layout.addWidget(btn_chat)
 
-        btn_api = QPushButton("🤖  API 自动")
+        btn_api = QPushButton("API 自动")
         btn_api.setStyleSheet(
             "QPushButton {"
             "  font-size: 15px; padding: 16px; border: 2px solid #aaa;"
@@ -1394,7 +1394,7 @@ class SynchronizerPage(QWidget):
             list_layout.setSpacing(8)
 
             # "Add new model" button
-            btn_add = QPushButton("＋ 加入新模型")
+            btn_add = QPushButton("加入新模型")
             btn_add.setStyleSheet(
                 "QPushButton {"
                 "  font-size: 14px; padding: 10px; border: 2px dashed #aaa;"
