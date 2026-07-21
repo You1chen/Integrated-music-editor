@@ -1607,6 +1607,8 @@ class SynchronizerPage(QWidget):
                 btn_test_save.setText("测试中…")
                 feedback.hide()
 
+                _test_done = [False]
+
                 def _do_test() -> None:
                     try:
                         body = json.dumps({
@@ -1618,13 +1620,18 @@ class SynchronizerPage(QWidget):
                             "Content-Type": "application/json",
                             "Authorization": f"Bearer {k}",
                         })
-                        with urllib.request.urlopen(req, timeout=30) as resp:
+                        with urllib.request.urlopen(req, timeout=10) as resp:
                             json.loads(resp.read().decode("utf-8"))
-                        QTimer.singleShot(0, lambda: _on_test_result(True, "连接成功 ✓"))
+                        if not _test_done[0]:
+                            _test_done[0] = True
+                            QTimer.singleShot(0, lambda: _on_test_result(True, "连接成功 ✓"))
                     except Exception as e:
-                        QTimer.singleShot(0, lambda: _on_test_result(False, str(e)))
+                        if not _test_done[0]:
+                            _test_done[0] = True
+                            QTimer.singleShot(0, lambda: _on_test_result(False, str(e)))
 
                 def _on_test_result(ok: bool, msg: str) -> None:
+                    _watchdog.stop()
                     btn_test_save.setEnabled(True)
                     btn_test_save.setText("测试并保存")
                     if ok:
@@ -1652,6 +1659,18 @@ class SynchronizerPage(QWidget):
                         _show_feedback(f"连接失败，未保存：{msg}", True)
 
                 threading.Thread(target=_do_test, daemon=True).start()
+
+                # Watchdog: force-reset after 15 s no matter what
+                _watchdog = QTimer(form_page)
+                _watchdog.setSingleShot(True)
+                _watchdog.timeout.connect(
+                    lambda: (
+                        _on_test_result(False, "连接超时（15 秒无响应）")
+                        if not _test_done[0]
+                        else None
+                    )
+                )
+                _watchdog.start(15000)
 
             btn_test_save.clicked.connect(_test_and_save)
 
