@@ -10,7 +10,6 @@ import json
 import math
 import os
 import re
-import tempfile
 import threading
 import urllib.request
 from typing import TYPE_CHECKING
@@ -1070,7 +1069,12 @@ class SynchronizerPage(QWidget):
 
         # ── Helper: do the actual translation ──
         def _do_translate(cfg: dict) -> None:
-            """Build prompt, call AI API in background, feed result to pattern match."""
+            """Build prompt, call AI API in background, show result in a popup.
+
+            The API auto step only does: prompt → API call → result dialog.
+            It does NOT touch pattern matching — the user decides whether to
+            copy the result or fill it into the pattern-match text box.
+            """
             result = self._build_prompt_text()
             if result is None:
                 self._mw.toast_overlay.show_toast(
@@ -1086,7 +1090,7 @@ class SynchronizerPage(QWidget):
             # ── Progress dialog ──
             progress = QDialog(dialog)
             progress.setWindowTitle("API 自动翻译")
-            progress.setFixedSize(380, 130)
+            progress.setFixedSize(380, 110)
             progress.setWindowFlags(
                 Qt.WindowType.Dialog
                 | Qt.WindowType.CustomizeWindowHint
@@ -1172,43 +1176,83 @@ class SynchronizerPage(QWidget):
                     self._mw.toast_overlay.show_toast("warning", "AI 返回了空内容")
                     return
 
-                # Save to temp txt, fill target / open pattern match, then clean up
-                try:
-                    fd, temp_path = tempfile.mkstemp(
-                        suffix=".txt", prefix="lrc_trans_"
-                    )
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(response_text)
+                # ── Result dialog: show full translation, let user decide ──
+                _show_result(response_text)
 
-                    dialog.accept()
+            def _show_result(text: str) -> None:
+                """Show the complete AI translation in a popup with copy / fill buttons."""
+                rd = QDialog(dialog)
+                rd.setWindowTitle("翻译结果 — " + cfg.get("name", "API"))
+                rd.resize(700, 500)
+                rd.setMinimumSize(500, 350)
 
-                    if target_text_edit is not None:
-                        target_text_edit.setPlainText(response_text)
-                        QTimer.singleShot(100, lambda: _cleanup_temp(temp_path))
+                rd_layout = QVBoxLayout(rd)
+                rd_layout.setContentsMargins(12, 12, 12, 12)
+                rd_layout.setSpacing(8)
+
+                hint = QLabel("AI 返回的完整翻译，你可以复制后粘贴到模式匹配，或直接填入。")
+                hint.setStyleSheet("font-size: 12px; color: #888;")
+                hint.setWordWrap(True)
+                rd_layout.addWidget(hint)
+
+                rd_edit = QPlainTextEdit()
+                rd_edit.setPlainText(text)
+                rd_edit.setFont(QFont("Consolas", 12))
+                rd_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+                rd_edit.setReadOnly(True)
+                rd_layout.addWidget(rd_edit, stretch=1)
+
+                rd_btns = QHBoxLayout()
+                rd_btns.setSpacing(8)
+
+                btn_copy = QPushButton("📋  复制全部")
+                btn_copy.clicked.connect(
+                    lambda: (
+                        QApplication.clipboard().setText(rd_edit.toPlainText()),
                         self._mw.toast_overlay.show_toast(
-                            "success", "翻译结果已填入，请检查并点击「匹配」"
-                        )
-                    else:
-                        QTimer.singleShot(
-                            100,
-                            lambda: self._on_pattern_match(
-                                initial_text=response_text
-                            ),
-                        )
-                        QTimer.singleShot(
-                            200,
-                            lambda: _cleanup_temp(temp_path),
-                        )
-                except OSError as e:
-                    self._mw.toast_overlay.show_toast(
-                        "error", f"临时文件写入失败：{e}"
+                            "success", "翻译结果已复制到剪贴板"
+                        ),
                     )
+                )
+                rd_btns.addWidget(btn_copy)
 
-            def _cleanup_temp(path: str) -> None:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
+                btn_fill = QPushButton("填入模式匹配")
+                btn_fill.setStyleSheet(
+                    "QPushButton {"
+                    "  font-weight: bold; color: #58a6ff;"
+                    "  border: 2px solid #58a6ff;"
+                    "  padding: 6px 16px; border-radius: 4px;"
+                    "}"
+                    "QPushButton:hover {"
+                    "  background-color: rgba(88,166,255,0.15);"
+                    "}"
+                )
+                btn_fill.clicked.connect(
+                    lambda: _fill_pattern_match(rd_edit.toPlainText())
+                )
+                rd_btns.addWidget(btn_fill)
+
+                rd_btns.addStretch()
+                btn_close = QPushButton("关闭")
+                btn_close.clicked.connect(rd.accept)
+                rd_btns.addWidget(btn_close)
+
+                rd_layout.addLayout(rd_btns)
+                rd.exec()
+
+            def _fill_pattern_match(text: str) -> None:
+                """Feed the translation text into the pattern match dialog."""
+                dialog.accept()  # close AI assist dialog
+                if target_text_edit is not None:
+                    target_text_edit.setPlainText(text)
+                    self._mw.toast_overlay.show_toast(
+                        "success", "翻译结果已填入，请检查并点击「匹配」"
+                    )
+                else:
+                    QTimer.singleShot(
+                        100,
+                        lambda: self._on_pattern_match(initial_text=text),
+                    )
 
             _poll_timer = QTimer(progress)
             _poll_timer.timeout.connect(_poll_api)
