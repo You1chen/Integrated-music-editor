@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -1338,55 +1337,44 @@ class SynchronizerPage(QWidget):
 
             # ── Shared input config ──
             INPUT_H = 40
+            LABEL_W = 80  # px — label 固定宽度
 
-            fields = QFormLayout()
-            fields.setSpacing(10)
-            fields.setContentsMargins(0, 4, 0, 0)
+            def _row(label_text: str, input_widget: QLineEdit) -> QHBoxLayout:
+                """Create a row: [label | input] in an HBox, same height, same row."""
+                lbl = QLabel(label_text)
+                lbl.setFixedSize(LABEL_W, INPUT_H)
+                lbl.setStyleSheet("font-size: 13px;")
+                lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                row = QHBoxLayout()
+                row.setSpacing(8)
+                row.addWidget(lbl)
+                row.addWidget(input_widget, stretch=1)
+                return row
 
-            _label_align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-
-            name_label = QLabel("自定义名称")
-            name_label.setStyleSheet("font-size: 13px;")
-            name_label.setFixedHeight(INPUT_H)
-            name_label.setAlignment(_label_align)
             name_input = QLineEdit()
             name_input.setPlaceholderText("例如：我的 DeepSeek")
             name_input.setFont(QFont("Microsoft YaHei", 11))
             name_input.setFixedHeight(INPUT_H)
-            fields.addRow(name_label, name_input)
+            outer.addLayout(_row("自定义名称", name_input))
 
-            url_label = QLabel("API URL")
-            url_label.setStyleSheet("font-size: 13px;")
-            url_label.setFixedHeight(INPUT_H)
-            url_label.setAlignment(_label_align)
             url_input = QLineEdit()
             url_input.setPlaceholderText("https://api.deepseek.com/v1/chat/completions")
             url_input.setFont(QFont("Consolas", 11))
             url_input.setFixedHeight(INPUT_H)
-            fields.addRow(url_label, url_input)
+            outer.addLayout(_row("API URL", url_input))
 
-            key_label = QLabel("API Key")
-            key_label.setStyleSheet("font-size: 13px;")
-            key_label.setFixedHeight(INPUT_H)
-            key_label.setAlignment(_label_align)
             key_input = QLineEdit()
             key_input.setEchoMode(QLineEdit.EchoMode.Password)
             key_input.setPlaceholderText("sk-…")
             key_input.setFont(QFont("Consolas", 11))
             key_input.setFixedHeight(INPUT_H)
-            fields.addRow(key_label, key_input)
+            outer.addLayout(_row("API Key", key_input))
 
-            model_label = QLabel("Model")
-            model_label.setStyleSheet("font-size: 13px;")
-            model_label.setFixedHeight(INPUT_H)
-            model_label.setAlignment(_label_align)
             model_input = QLineEdit()
             model_input.setPlaceholderText("deepseek-chat")
             model_input.setFont(QFont("Consolas", 11))
             model_input.setFixedHeight(INPUT_H)
-            fields.addRow(model_label, model_input)
-
-            outer.addLayout(fields)
+            outer.addLayout(_row("Model", model_input))
 
             # Pre-fill if editing existing config
             if edit_index is not None:
