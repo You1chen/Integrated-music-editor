@@ -2048,6 +2048,8 @@ class SynchronizerPage(QWidget):
                             theme_color=theme_color,
                             is_dark=is_dark,
                         )
+                    # Scroll to keep the filled row visible
+                    self._scroll_to_row(idx)
 
             _fill_timer = QTimer(self)
             _fill_timer.timeout.connect(_fill_one)
