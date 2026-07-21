@@ -2148,6 +2148,15 @@ class SynchronizerPage(QWidget):
         # Same-name LRC next to MP3
         if os.path.exists(lrc_path):
             if lrc_path == self._mw.config.get_last_lrc_path():
+                # Same file already loaded — reload to restore UI (it was
+                # cleared by _on_import before entering smart import).
+                try:
+                    with open(lrc_path, "r", encoding="utf-8") as f:
+                        text = f.read()
+                    self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
+                    self._mw.toast_overlay.show_toast("info", "已是当前歌词文件")
+                except Exception as e:
+                    QMessageBox.warning(self, "错误", f"加载歌词文件失败：{e}")
                 return
             try:
                 with open(lrc_path, "r", encoding="utf-8") as f:
