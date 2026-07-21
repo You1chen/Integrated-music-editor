@@ -1177,14 +1177,14 @@ class SynchronizerPage(QWidget):
                     return
 
                 # ── Save to txt next to the LRC source file ──
-                _save_translation_txt(response_text)
+                out_path = _save_translation_txt(response_text)
 
-                # ── Result dialog: show full translation, let user decide ──
-                _show_result(response_text)
+                # ── "翻译成功" confirm dialog ──
+                _show_done(out_path)
 
-            def _save_translation_txt(text: str) -> None:
+            def _save_translation_txt(text: str) -> str:
                 """Write the AI translation to a .lrc-translation.txt file
-                in the same directory as the current LRC source file."""
+                next to the current LRC source file. Returns the output path."""
                 lrc_path = self._mw.config.get_last_lrc_path()
                 if lrc_path:
                     stem = os.path.splitext(os.path.basename(lrc_path))[0]
@@ -1197,11 +1197,64 @@ class SynchronizerPage(QWidget):
                     with open(out_path, "w", encoding="utf-8") as f:
                         f.write(text)
                 except OSError:
-                    pass  # not critical; result dialog still shows
+                    pass
+                return out_path
+
+            def _show_done(txt_path: str) -> None:
+                """Simple confirm: 翻译成功 → 查看 / 取消."""
+                done = QDialog(dialog)
+                done.setWindowTitle("翻译成功")
+                done.setFixedSize(420, 140)
+                done.setWindowFlags(
+                    Qt.WindowType.Dialog
+                    | Qt.WindowType.CustomizeWindowHint
+                    | Qt.WindowType.WindowTitleHint
+                )
+                d_layout = QVBoxLayout(done)
+                d_layout.setContentsMargins(20, 16, 20, 16)
+                d_layout.setSpacing(12)
+
+                msg = QLabel(f"翻译完成，已保存至：\n{txt_path}")
+                msg.setWordWrap(True)
+                msg.setStyleSheet("font-size: 13px;")
+                d_layout.addWidget(msg)
+
+                d_btns = QHBoxLayout()
+                d_btns.setSpacing(8)
+                d_btns.addStretch()
+
+                btn_view = QPushButton("查看")
+                btn_view.setStyleSheet(
+                    "QPushButton {"
+                    "  font-weight: bold; color: #58a6ff;"
+                    "  border: 2px solid #58a6ff;"
+                    "  padding: 6px 20px; border-radius: 4px;"
+                    "}"
+                    "QPushButton:hover {"
+                    "  background-color: rgba(88,166,255,0.15);"
+                    "}"
+                )
+                btn_view.clicked.connect(
+                    lambda: (
+                        done.accept(),
+                        QTimer.singleShot(
+                            50,
+                            lambda: _show_result(_api_result[0] or ""),
+                        ),
+                    )
+                )
+                d_btns.addWidget(btn_view)
+
+                btn_cancel = QPushButton("取消")
+                btn_cancel.clicked.connect(done.reject)
+                d_btns.addWidget(btn_cancel)
+
+                d_layout.addLayout(d_btns)
+                done.exec()
 
             def _show_result(text: str) -> None:
-                """Show the complete AI translation in a popup with copy / fill buttons."""
-                rd = QDialog(dialog)
+                """Show the complete AI translation with copy / fill buttons."""
+                rd = QDialog()
                 rd.setWindowTitle("翻译结果 — " + cfg.get("name", "API"))
                 rd.resize(700, 500)
                 rd.setMinimumSize(500, 350)
@@ -1209,11 +1262,6 @@ class SynchronizerPage(QWidget):
                 rd_layout = QVBoxLayout(rd)
                 rd_layout.setContentsMargins(12, 12, 12, 12)
                 rd_layout.setSpacing(8)
-
-                hint = QLabel("AI 返回的完整翻译，你可以复制后粘贴到模式匹配，或直接填入。")
-                hint.setStyleSheet("font-size: 12px; color: #888;")
-                hint.setWordWrap(True)
-                rd_layout.addWidget(hint)
 
                 rd_edit = QPlainTextEdit()
                 rd_edit.setPlainText(text)
