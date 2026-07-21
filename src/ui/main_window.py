@@ -5,7 +5,10 @@ from __future__ import annotations
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
+    QLineEdit,
     QMainWindow,
+    QPlainTextEdit,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -154,9 +157,21 @@ class MainWindow(QMainWindow):
         - Space (SYNC) always timestamps — never toggles play/pause
         - Audio shortcuts (seek, rate, toggle) are blocked entirely
         Other key events fall through to handle_global_key.
+
+        Keyboard shortcuts are suppressed when a text-input widget has
+        focus so that dialogs (like pattern-match / AI assist) receive
+        normal text input.
         """
         from PyQt6.QtCore import QEvent
         if event.type() != QEvent.Type.KeyPress:
+            return super().eventFilter(obj, event)
+
+        # ── Don't steal keys from text-input widgets ──
+        from PyQt6.QtWidgets import QApplication
+        focus_widget = QApplication.focusWidget()
+        if focus_widget is not None and isinstance(
+            focus_widget, (QLineEdit, QPlainTextEdit, QTextEdit)
+        ):
             return super().eventFilter(obj, event)
 
         # ── Intercept when a lyric is selected on the sync page ──

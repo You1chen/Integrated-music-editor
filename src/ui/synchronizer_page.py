@@ -1063,140 +1063,13 @@ class SynchronizerPage(QWidget):
         btn_back2.clicked.connect(lambda: stack.setCurrentIndex(0))
         api_layout.addWidget(btn_back2)
 
-        # Sub-stack: config form (0) vs translate action (1)
+        # Sub-stack: model list (0) vs config form (1)
         api_substack = QStackedWidget()
         api_layout.addWidget(api_substack, stretch=1)
         api_layout.addStretch()
 
-        # ── API sub-page 0: Config form ──
-        config_page = QWidget()
-        config_layout = QVBoxLayout(config_page)
-        config_layout.setContentsMargins(4, 8, 4, 0)
-        config_layout.setSpacing(10)
-
-        cfg_hint = QLabel("配置 OpenAI 兼容的 API 端点（密钥将加密存储）")
-        cfg_hint.setStyleSheet("font-size: 12px; color: #888;")
-        cfg_hint.setWordWrap(True)
-        config_layout.addWidget(cfg_hint)
-
-        # URL
-        url_label = QLabel("API URL")
-        url_label.setStyleSheet("font-size: 13px; font-weight: bold;")
-        config_layout.addWidget(url_label)
-        url_input = QLineEdit()
-        url_input.setPlaceholderText("https://api.deepseek.com/v1/chat/completions")
-        url_input.setFont(QFont("Consolas", 11))
-        config_layout.addWidget(url_input)
-
-        # API Key
-        key_label = QLabel("API Key")
-        key_label.setStyleSheet("font-size: 13px; font-weight: bold;")
-        config_layout.addWidget(key_label)
-        key_input = QLineEdit()
-        key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        key_input.setPlaceholderText("sk-…")
-        key_input.setFont(QFont("Consolas", 11))
-        config_layout.addWidget(key_input)
-
-        # Model
-        model_label = QLabel("Model")
-        model_label.setStyleSheet("font-size: 13px; font-weight: bold;")
-        config_layout.addWidget(model_label)
-        model_input = QLineEdit()
-        model_input.setPlaceholderText("deepseek-chat")
-        model_input.setFont(QFont("Consolas", 11))
-        config_layout.addWidget(model_input)
-
-        config_layout.addStretch()
-
-        btn_save_config = QPushButton("保存配置")
-        btn_save_config.setStyleSheet(
-            "QPushButton {"
-            "  font-size: 14px; padding: 10px; border: 2px solid #58a6ff;"
-            "  border-radius: 6px; color: #58a6ff; font-weight: bold;"
-            "}"
-            "QPushButton:hover { background-color: rgba(88,166,255,0.15); }"
-        )
-        config_layout.addWidget(btn_save_config)
-
-        api_substack.addWidget(config_page)  # api_sub index 0
-
-        # ── API sub-page 1: Translate action ──
-        translate_page = QWidget()
-        translate_layout = QVBoxLayout(translate_page)
-        translate_layout.setContentsMargins(4, 8, 4, 0)
-        translate_layout.setSpacing(10)
-
-        status_label = QLabel()
-        status_label.setStyleSheet("font-size: 13px; color: #888;")
-        status_label.setWordWrap(True)
-        translate_layout.addWidget(status_label)
-
-        translate_layout.addStretch()
-
-        btn_start_translate = QPushButton("🚀  开始翻译")
-        btn_start_translate.setStyleSheet(
-            "QPushButton {"
-            "  font-size: 15px; padding: 14px; border: 2px solid #58a6ff;"
-            "  border-radius: 8px; color: #58a6ff; font-weight: bold;"
-            "}"
-            "QPushButton:hover { background-color: rgba(88,166,255,0.15); }"
-        )
-        translate_layout.addWidget(btn_start_translate)
-
-        btn_reconfig = QPushButton("重新配置")
-        btn_reconfig.setFlat(True)
-        btn_reconfig.setCursor(Qt.CursorShape.PointingHandCursor)
-        translate_layout.addWidget(btn_reconfig)
-
-        api_substack.addWidget(translate_page)  # api_sub index 1
-
-        # ── Populate form if config exists ──
-        api_config = self._mw.config.get_api_config()
-        saved_url = api_config.get("url", "")
-        saved_key = api_config.get("api_key", "")
-        saved_model = api_config.get("model", "")
-
-        if saved_url:
-            url_input.setText(saved_url)
-        if saved_key:
-            key_input.setText(saved_key)
-        if saved_model:
-            model_input.setText(saved_model)
-
-        def _refresh_api_page() -> None:
-            """Switch between config form and translate action based on saved config."""
-            if self._mw.config.has_api_config():
-                cfg = self._mw.config.get_api_config()
-                key_masked = cfg["api_key"][:5] + "****" + cfg["api_key"][-3:] if len(cfg["api_key"]) > 8 else "****"
-                status_label.setText(
-                    f"API: {cfg['url']}\n"
-                    f"Key: {key_masked}\n"
-                    f"Model: {cfg['model']}"
-                )
-                api_substack.setCurrentIndex(1)
-            else:
-                api_substack.setCurrentIndex(0)
-
-        _refresh_api_page()
-
-        # ── Button handlers ──
-
-        def _save_api_config() -> None:
-            u = url_input.text().strip()
-            k = key_input.text().strip()
-            m = model_input.text().strip()
-            if not u or not k or not m:
-                self._mw.toast_overlay.show_toast("warning", "请填写完整的 API URL、Key 和 Model")
-                return
-            self._mw.config.set_api_config(u, k, m)
-            self._mw.toast_overlay.show_toast("success", "API 配置已加密保存")
-            _refresh_api_page()
-
-        btn_save_config.clicked.connect(_save_api_config)
-        btn_reconfig.clicked.connect(lambda: api_substack.setCurrentIndex(0))
-
-        def _start_translation() -> None:
+        # ── Helper: do the actual translation ──
+        def _do_translate(cfg: dict) -> None:
             """Build prompt, call AI API in background, feed result to pattern match."""
             result = self._build_prompt_text()
             if result is None:
@@ -1206,7 +1079,6 @@ class SynchronizerPage(QWidget):
                 return
 
             prompt, line_count = result
-            cfg = self._mw.config.get_api_config()
             api_url = cfg["url"]
             api_key = cfg["api_key"]
             model = cfg["model"]
@@ -1214,7 +1086,7 @@ class SynchronizerPage(QWidget):
             # ── Progress dialog ──
             progress = QDialog(dialog)
             progress.setWindowTitle("API 自动翻译")
-            progress.setFixedSize(360, 130)
+            progress.setFixedSize(380, 130)
             progress.setWindowFlags(
                 Qt.WindowType.Dialog
                 | Qt.WindowType.CustomizeWindowHint
@@ -1229,7 +1101,6 @@ class SynchronizerPage(QWidget):
             p_label.setStyleSheet("font-size: 13px;")
             p_layout.addWidget(p_label)
 
-            # Animated dots
             dots_label = QLabel()
             dots_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             dots_label.setTextFormat(Qt.TextFormat.RichText)
@@ -1253,20 +1124,11 @@ class SynchronizerPage(QWidget):
             _anim_dots2()
             progress.show()
 
-            # ── Background API call ──
             _api_result: list[str | None] = [None]
             _api_error: list[str | None] = [None]
             _api_done = [False]
-            _cancel_requested = [False]
-
-            # Allow cancel
-            btn_cancel_api = QPushButton("取消")
-            btn_cancel_api.clicked.connect(lambda: _cancel_requested.__setitem__(0, True))
-            p_layout.addWidget(btn_cancel_api)
 
             def _call_api() -> None:
-                if _cancel_requested[0]:
-                    return
                 try:
                     body = json.dumps({
                         "model": model,
@@ -1291,7 +1153,6 @@ class SynchronizerPage(QWidget):
 
             threading.Thread(target=_call_api, daemon=True).start()
 
-            # ── Poll for completion ──
             def _poll_api() -> None:
                 if not _api_done[0]:
                     return
@@ -1319,18 +1180,15 @@ class SynchronizerPage(QWidget):
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
                         f.write(response_text)
 
-                    # Close the AI assist dialog
                     dialog.accept()
 
                     if target_text_edit is not None:
-                        # Fill the parent pattern-match dialog's text area directly
                         target_text_edit.setPlainText(response_text)
                         QTimer.singleShot(100, lambda: _cleanup_temp(temp_path))
                         self._mw.toast_overlay.show_toast(
                             "success", "翻译结果已填入，请检查并点击「匹配」"
                         )
                     else:
-                        # Open pattern match pre-filled with the response
                         QTimer.singleShot(
                             100,
                             lambda: self._on_pattern_match(
@@ -1356,7 +1214,311 @@ class SynchronizerPage(QWidget):
             _poll_timer.timeout.connect(_poll_api)
             _poll_timer.start(200)
 
-        btn_start_translate.clicked.connect(_start_translation)
+        # ── Build the model-list page ──
+        def _build_model_list() -> None:
+            """Rebuild the model-list page from saved configs."""
+            # Clear existing widget from the sub-stack index 0
+            old = api_substack.widget(0)
+            if old is not None:
+                api_substack.removeWidget(old)
+                old.deleteLater()
+
+            configs = self._mw.config.get_api_configs()
+
+            list_page = QWidget()
+            list_layout = QVBoxLayout(list_page)
+            list_layout.setContentsMargins(4, 8, 4, 0)
+            list_layout.setSpacing(8)
+
+            # "Add new model" button
+            btn_add = QPushButton("＋ 加入新模型")
+            btn_add.setStyleSheet(
+                "QPushButton {"
+                "  font-size: 14px; padding: 10px; border: 2px dashed #aaa;"
+                "  border-radius: 6px; color: #aaa;"
+                "}"
+                "QPushButton:hover {"
+                "  border-color: #58a6ff; color: #58a6ff;"
+                "}"
+            )
+            btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_add.clicked.connect(lambda: api_substack.setCurrentIndex(1))
+            list_layout.addWidget(btn_add)
+
+            if configs:
+                list_layout.addSpacing(4)
+
+            # Scroll area for the model rows
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll_widget = QWidget()
+            scroll_layout = QVBoxLayout(scroll_widget)
+            scroll_layout.setContentsMargins(0, 0, 0, 0)
+            scroll_layout.setSpacing(6)
+
+            for i, cfg in enumerate(configs):
+                row = QFrame()
+                row.setStyleSheet(
+                    "QFrame {"
+                    "  border: 1px solid #444; border-radius: 6px;"
+                    "  padding: 8px; background: rgba(128,128,128,0.05);"
+                    "}"
+                    "QFrame:hover { border-color: #666; }"
+                )
+                row_layout = QHBoxLayout(row)
+                row_layout.setContentsMargins(12, 8, 12, 8)
+                row_layout.setSpacing(10)
+
+                # Model info
+                info_label = QLabel(f"{cfg['name']}\n"
+                                    f"<span style='font-size:11px;color:#888;'>"
+                                    f"{cfg['model']}</span>")
+                info_label.setTextFormat(Qt.TextFormat.RichText)
+                info_label.setStyleSheet("font-size: 14px; border: none;")
+                row_layout.addWidget(info_label, stretch=1)
+
+                # Translate button
+                btn_translate = QPushButton("翻译")
+                btn_translate.setFixedSize(70, 36)
+                btn_translate.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_translate.setStyleSheet(
+                    "QPushButton {"
+                    "  font-size: 13px; border: 2px solid #58a6ff;"
+                    "  border-radius: 4px; color: #58a6ff; font-weight: bold;"
+                    "}"
+                    "QPushButton:hover {"
+                    "  background-color: rgba(88,166,255,0.15);"
+                    "}"
+                )
+                # Capture cfg by value via default arg
+                btn_translate.clicked.connect(
+                    lambda checked, c=cfg: _do_translate(c)
+                )
+                row_layout.addWidget(btn_translate)
+
+                scroll_layout.addWidget(row)
+
+            scroll_layout.addStretch()
+            scroll.setWidget(scroll_widget)
+
+            if configs:
+                list_layout.addWidget(scroll, stretch=1)
+            else:
+                empty_hint = QLabel("暂无已保存的模型，请点击上方按钮添加")
+                empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                empty_hint.setStyleSheet("font-size: 13px; color: #888;")
+                list_layout.addWidget(empty_hint, stretch=1)
+
+            api_substack.insertWidget(0, list_page)
+            api_substack.setCurrentIndex(0)
+
+        # ── Build the config-form page ──
+        def _build_config_form(edit_index: int | None = None) -> None:
+            """Build the config-form page.
+
+            When *edit_index* is None we are adding a new config;
+            otherwise we are editing an existing one (index into configs list).
+            """
+            old = api_substack.widget(1)
+            if old is not None:
+                api_substack.removeWidget(old)
+                old.deleteLater()
+
+            form_page = QWidget()
+            form_layout = QVBoxLayout(form_page)
+            form_layout.setContentsMargins(4, 8, 4, 0)
+            form_layout.setSpacing(10)
+
+            title_text = "编辑模型配置" if edit_index is not None else "配置新的 API 模型"
+            form_title = QLabel(title_text)
+            form_title.setStyleSheet("font-size: 15px; font-weight: bold;")
+            form_layout.addWidget(form_title)
+
+            # Name
+            name_label = QLabel("自定义名称")
+            name_label.setStyleSheet("font-size: 13px;")
+            form_layout.addWidget(name_label)
+            name_input = QLineEdit()
+            name_input.setPlaceholderText("例如：我的 DeepSeek")
+            name_input.setFont(QFont("Microsoft YaHei", 11))
+            form_layout.addWidget(name_input)
+
+            # URL
+            url_label = QLabel("API URL")
+            url_label.setStyleSheet("font-size: 13px;")
+            form_layout.addWidget(url_label)
+            url_input = QLineEdit()
+            url_input.setPlaceholderText("https://api.deepseek.com/v1/chat/completions")
+            url_input.setFont(QFont("Consolas", 11))
+            form_layout.addWidget(url_input)
+
+            # API Key
+            key_label = QLabel("API Key")
+            key_label.setStyleSheet("font-size: 13px;")
+            form_layout.addWidget(key_label)
+            key_input = QLineEdit()
+            key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            key_input.setPlaceholderText("sk-…")
+            key_input.setFont(QFont("Consolas", 11))
+            form_layout.addWidget(key_input)
+
+            # Model
+            model_label = QLabel("Model")
+            model_label.setStyleSheet("font-size: 13px;")
+            form_layout.addWidget(model_label)
+            model_input = QLineEdit()
+            model_input.setPlaceholderText("deepseek-chat")
+            model_input.setFont(QFont("Consolas", 11))
+            form_layout.addWidget(model_input)
+
+            # Pre-fill if editing existing config
+            if edit_index is not None:
+                configs = self._mw.config.get_api_configs()
+                if 0 <= edit_index < len(configs):
+                    cfg = configs[edit_index]
+                    name_input.setText(cfg.get("name", ""))
+                    url_input.setText(cfg.get("url", ""))
+                    key_input.setText(cfg.get("api_key", ""))
+                    model_input.setText(cfg.get("model", ""))
+
+            form_layout.addStretch()
+
+            # ── Feedback label (inline, replaces toast) ──
+            feedback = QLabel()
+            feedback.setStyleSheet("font-size: 12px; padding: 4px;")
+            feedback.setWordWrap(True)
+            feedback.hide()
+            form_layout.addWidget(feedback)
+
+            def _show_feedback(text: str, is_error: bool = False) -> None:
+                color = "#f85149" if is_error else "#3fb950"
+                feedback.setText(f"<span style='color:{color}'>{text}</span>")
+                feedback.show()
+
+            # ── Button row ──
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(8)
+
+            btn_test = QPushButton("测试连接")
+            btn_test.setStyleSheet(
+                "QPushButton {"
+                "  font-size: 13px; padding: 8px 16px; border: 1px solid #aaa;"
+                "  border-radius: 4px;"
+                "}"
+                "QPushButton:hover { border-color: #58a6ff; color: #58a6ff; }"
+            )
+            btn_row.addWidget(btn_test)
+
+            btn_row.addStretch()
+
+            btn_cancel = QPushButton("取消")
+            btn_cancel.setStyleSheet(
+                "QPushButton {"
+                "  font-size: 13px; padding: 8px 16px; border: 1px solid #aaa;"
+                "  border-radius: 4px;"
+                "}"
+                "QPushButton:hover { border-color: #f85149; color: #f85149; }"
+            )
+            btn_cancel.clicked.connect(lambda: api_substack.setCurrentIndex(0))
+            btn_row.addWidget(btn_cancel)
+
+            btn_save = QPushButton("保存配置")
+            btn_save.setStyleSheet(
+                "QPushButton {"
+                "  font-size: 13px; padding: 8px 16px; border: 2px solid #58a6ff;"
+                "  border-radius: 4px; color: #58a6ff; font-weight: bold;"
+                "}"
+                "QPushButton:hover { background-color: rgba(88,166,255,0.15); }"
+            )
+            btn_row.addWidget(btn_save)
+
+            form_layout.addLayout(btn_row)
+
+            # ── Test connection ──
+            def _test_connection() -> None:
+                u = url_input.text().strip()
+                k = key_input.text().strip()
+                m = model_input.text().strip()
+                if not u or not k:
+                    _show_feedback("请先填写 API URL 和 Key", True)
+                    return
+
+                btn_test.setEnabled(False)
+                btn_test.setText("测试中…")
+                feedback.hide()
+
+                def _do_test() -> None:
+                    try:
+                        body = json.dumps({
+                            "model": m or "default",
+                            "messages": [{"role": "user", "content": "Hi"}],
+                            "max_tokens": 5,
+                        }).encode("utf-8")
+                        req = urllib.request.Request(u, data=body, headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {k}",
+                        })
+                        with urllib.request.urlopen(req, timeout=30) as resp:
+                            json.loads(resp.read().decode("utf-8"))
+                        QTimer.singleShot(0, lambda: _on_test_result(True, "连接成功 ✓"))
+                    except Exception as e:
+                        QTimer.singleShot(0, lambda: _on_test_result(False, str(e)))
+
+                def _on_test_result(ok: bool, msg: str) -> None:
+                    btn_test.setEnabled(True)
+                    btn_test.setText("测试连接")
+                    _show_feedback(msg, is_error=not ok)
+
+                threading.Thread(target=_do_test, daemon=True).start()
+
+            btn_test.clicked.connect(_test_connection)
+
+            # ── Save config ──
+            def _save_config() -> None:
+                name = name_input.text().strip()
+                u = url_input.text().strip()
+                k = key_input.text().strip()
+                m = model_input.text().strip()
+                if not name or not u or not k or not m:
+                    _show_feedback("请填写完整的名称、URL、Key 和 Model", True)
+                    return
+
+                if edit_index is not None:
+                    # Replace existing config
+                    configs = self._mw.config.get_api_configs()
+                    if 0 <= edit_index < len(configs):
+                        configs[edit_index] = {
+                            "name": name, "url": u, "api_key": k, "model": m
+                        }
+                        # Remove old, re-add all
+                        self._mw.config._load_config()
+                        raw_cfg = self._mw.config._load_config()
+                        raw_cfg["apiConfigs"] = []
+                        self._mw.config._save_config()
+                        for c in configs:
+                            self._mw.config.add_api_config(
+                                c["name"], c["url"], c["api_key"], c["model"]
+                            )
+                else:
+                    self._mw.config.add_api_config(name, u, k, m)
+
+                _show_feedback("配置已加密保存 ✓")
+                # Rebuild model list and switch back after short delay
+                QTimer.singleShot(600, _build_model_list)
+
+            btn_save.clicked.connect(_save_config)
+
+            api_substack.insertWidget(1, form_page)
+
+        # ── Initial state ──
+        if self._mw.config.has_api_configs():
+            _build_model_list()
+            _build_config_form()  # prepare the form for later use
+        else:
+            _build_model_list()  # empty list with "add" button
+            _build_config_form()
+            api_substack.setCurrentIndex(1)  # auto-enter config form
 
         stack.addWidget(api_page)  # index 2
 

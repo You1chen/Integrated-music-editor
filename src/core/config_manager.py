@@ -313,35 +313,70 @@ class ConfigManager:
         cfg["keybindings"] = data
         self._save_config()
 
-    # ── Persistent: API Config (encrypted) ──────────────────
+    # ── Persistent: API Configs (encrypted, multiple named entries) ──
 
-    def get_api_config(self) -> Dict[str, str]:
-        """Get decrypted API configuration.
+    def get_api_configs(self) -> "list[dict[str, str]]":
+        """Get all decrypted API configurations.
 
-        Returns ``{"url": "", "api_key": "", "model": ""}``.
-        Empty strings mean the field is not configured.
+        Returns a list of ``{"name": ..., "url": ..., "api_key": ..., "model": ...}``.
+        Only entries with all three of url/api_key/model are included.
         """
-        raw = self._load_config().get("apiConfig", {})
-        result: Dict[str, str] = {}
-        for field in ("url", "api_key", "model"):
-            ciphertext = raw.get(field, "")
-            try:
-                result[field] = decrypt(ciphertext) if ciphertext else ""
-            except Exception:
-                result[field] = ""
+        raw_cfg = self._load_config()
+
+        # ── Migration: old single apiConfig → new apiConfigs list ──
+        if "apiConfig" in raw_cfg and "apiConfigs" not in raw_cfg:
+            old = raw_cfg.pop("apiConfig")
+            migrated = {
+                "name": encrypt("默认") if old.get("url") else "",
+                "url": old.get("url", ""),
+                "api_key": old.get("api_key", ""),
+                "model": old.get("model", ""),
+            }
+            raw_cfg["apiConfigs"] = [migrated]
+            self._save_config()
+
+        raw_list: list[dict[str, str]] = raw_cfg.get("apiConfigs", [])
+        result: list[dict[str, str]] = []
+        for entry in raw_list:
+            cfg: dict[str, str] = {}
+            for field in ("name", "url", "api_key", "model"):
+                ciphertext = entry.get(field, "")
+                try:
+                    cfg[field] = decrypt(ciphertext) if ciphertext else ""
+                except Exception:
+                    cfg[field] = ""
+            if cfg.get("url") and cfg.get("api_key") and cfg.get("model"):
+                result.append(cfg)
         return result
 
-    def set_api_config(self, url: str, api_key: str, model: str) -> None:
-        """Encrypt and persist API configuration."""
+    def add_api_config(
+        self, name: str, url: str, api_key: str, model: str
+    ) -> None:
+        """Encrypt and append a new API configuration."""
         cfg = self._load_config()
-        cfg["apiConfig"] = {
+        # Migrate old format if present
+        if "apiConfig" in cfg and "apiConfigs" not in cfg:
+            self.get_api_configs()  # triggers migration
+            cfg = self._load_config()
+        configs: list[dict[str, str]] = cfg.get("apiConfigs", [])
+        configs.append({
+            "name": encrypt(name) if name else "",
             "url": encrypt(url) if url else "",
             "api_key": encrypt(api_key) if api_key else "",
             "model": encrypt(model) if model else "",
-        }
+        })
+        cfg["apiConfigs"] = configs
         self._save_config()
 
-    def has_api_config(self) -> bool:
-        """Return True when all three API fields are configured."""
-        c = self.get_api_config()
-        return bool(c.get("url") and c.get("api_key") and c.get("model"))
+    def remove_api_config(self, index: int) -> None:
+        """Remove an API configuration by its index in the list."""
+        cfg = self._load_config()
+        configs: list[dict[str, str]] = cfg.get("apiConfigs", [])
+        if 0 <= index < len(configs):
+            configs.pop(index)
+            cfg["apiConfigs"] = configs
+            self._save_config()
+
+    def has_api_configs(self) -> bool:
+        """Return True when at least one API config is saved."""
+        return len(self.get_api_configs()) > 0
