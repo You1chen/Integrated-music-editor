@@ -1452,11 +1452,32 @@ class SynchronizerPage(QWidget):
                     "  background-color: rgba(88,166,255,0.15);"
                     "}"
                 )
-                # Capture cfg by value via default arg
                 btn_translate.clicked.connect(
                     lambda checked, c=cfg: _do_translate(c)
                 )
                 row_layout.addWidget(btn_translate)
+
+                # Delete button
+                btn_del = QPushButton("✕")
+                btn_del.setFixedSize(28, 28)
+                btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_del.setStyleSheet(
+                    "QPushButton {"
+                    "  font-size: 14px; border: 1px solid transparent;"
+                    "  border-radius: 4px; color: #888;"
+                    "}"
+                    "QPushButton:hover {"
+                    "  border-color: #f85149; color: #f85149;"
+                    "}"
+                )
+                btn_del.setToolTip("删除此配置")
+                btn_del.clicked.connect(
+                    lambda checked, idx=i: (
+                        self._mw.config.remove_api_config(idx),
+                        _build_model_list(),
+                    )
+                )
+                row_layout.addWidget(btn_del)
 
                 scroll_layout.addWidget(row)
 
