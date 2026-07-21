@@ -60,19 +60,17 @@ class ToastWidget(QFrame):
         close_btn.mousePressEvent = lambda ev: self.hide()
         layout.addWidget(close_btn)
 
-    def fade_out(self) -> None:
-        """Animate and hide."""
-        self.hide()
-        self.deleteLater()
-
-
 class ToastOverlay(QWidget):
-    """Overlay that shows a queue of toast notifications."""
+    """Overlay that shows a queue of toast notifications.
+
+    Hidden when empty, shown only when at least one toast is active.
+    This avoids a black rectangle artifact on Windows where child-widget
+    transparency attributes have no effect.
+    """
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setStyleSheet("background: transparent;")
+        self.setFixedWidth(320)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -80,6 +78,7 @@ class ToastOverlay(QWidget):
         layout.addStretch()
 
         self._toasts: list[ToastWidget] = []
+        self.hide()  # start invisible — no toasts yet
 
     def show_toast(self, toast_type: str, text: str) -> None:
         """Add a toast notification to the queue."""
@@ -93,10 +92,19 @@ class ToastOverlay(QWidget):
         self._toasts.append(toast)
 
         # Auto-dismiss after 3 seconds
-        QTimer.singleShot(3000, toast.fade_out)
+        QTimer.singleShot(3000, lambda: self._dismiss(toast))
 
-        # Reposition in the top-right of the parent
+        self.show()  # make overlay visible
         self._reposition()
+
+    def _dismiss(self, toast: ToastWidget) -> None:
+        """Hide and remove a toast. Hide overlay if it was the last one."""
+        toast.hide()
+        toast.deleteLater()
+        if toast in self._toasts:
+            self._toasts.remove(toast)
+        if not self._toasts:
+            self.hide()  # nothing left → disappear completely
 
     def _reposition(self) -> None:
         """Position at top-right of parent window."""

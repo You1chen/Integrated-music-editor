@@ -89,7 +89,6 @@ class MainWindow(QMainWindow):
 
         # Toast overlay (positioned absolutely at top-right)
         self.toast_overlay = ToastOverlay(self)
-        self.toast_overlay.setFixedWidth(320)
 
         # ── Conect Signals ──────────────────────────────────
         self._connect_signals()
