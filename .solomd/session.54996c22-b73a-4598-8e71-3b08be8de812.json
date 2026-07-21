@@ -1,0 +1,29 @@
+{
+  "device_id": "54996c22-b73a-4598-8e71-3b08be8de812",
+  "device_label": "Windows",
+  "saved_at": 1784599917,
+  "active_index": 1,
+  "tabs": [
+    {
+      "file_path": null,
+      "file_name": "Untitled.md",
+      "cursor_line": null,
+      "cursor_col": null,
+      "rel_path": null
+    },
+    {
+      "file_path": "D:\\lrc\\lrc-maker-python\\PROGRESS.md",
+      "file_name": "PROGRESS.md",
+      "cursor_line": null,
+      "cursor_col": null,
+      "rel_path": "PROGRESS.md"
+    },
+    {
+      "file_path": "D:\\lrc\\lrc-maker-python\\INDEX.md",
+      "file_name": "INDEX.md",
+      "cursor_line": null,
+      "cursor_col": null,
+      "rel_path": "INDEX.md"
+    }
+  ]
+}
