@@ -1459,20 +1459,23 @@ class SynchronizerPage(QWidget):
                 )
                 row_layout.addWidget(btn_translate)
 
-                # Test button
-                btn_test = QPushButton("测")
-                btn_test.setFixedSize(28, 28)
-                btn_test.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn_test.setToolTip("测试连接")
-                btn_test.setStyleSheet(
+                # Shared small-button style
+                _small_btn_style = (
                     "QPushButton {"
                     "  font-size: 12px; border: 1px solid #666;"
                     "  border-radius: 4px; color: #aaa;"
                     "}"
                     "QPushButton:hover {"
-                    "  border-color: #3fb950; color: #3fb950;"
+                    "  border-color: #58a6ff; color: #58a6ff;"
                     "}"
                 )
+
+                # Test button
+                btn_test = QPushButton("测")
+                btn_test.setFixedSize(28, 28)
+                btn_test.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_test.setToolTip("测试连接")
+                btn_test.setStyleSheet(_small_btn_style)
 
                 def _make_test_handler(
                     btn: QPushButton, c: dict
@@ -1504,13 +1507,23 @@ class SynchronizerPage(QWidget):
                             if ok:
                                 btn.setText("✓")
                                 btn.setStyleSheet(
-                                    btn.styleSheet().replace("color: #aaa", "color: #3fb950")
+                                    _small_btn_style.replace(
+                                        "color: #aaa;", "color: #3fb950;"
+                                    ).replace(
+                                        "border-color: #58a6ff;",
+                                        "border-color: #3fb950;",
+                                    )
                                 )
                                 btn.setToolTip("连接成功")
                             else:
                                 btn.setText("✗")
                                 btn.setStyleSheet(
-                                    btn.styleSheet().replace("color: #aaa", "color: #f85149")
+                                    _small_btn_style.replace(
+                                        "color: #aaa;", "color: #f85149;"
+                                    ).replace(
+                                        "border-color: #58a6ff;",
+                                        "border-color: #f85149;",
+                                    )
                                 )
                                 btn.setToolTip(f"连接失败：{msg}")
                         threading.Thread(target=_work, daemon=True).start()
@@ -1523,15 +1536,7 @@ class SynchronizerPage(QWidget):
                 btn_del = QPushButton("✕")
                 btn_del.setFixedSize(28, 28)
                 btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn_del.setStyleSheet(
-                    "QPushButton {"
-                    "  font-size: 14px; border: 1px solid transparent;"
-                    "  border-radius: 4px; color: #888;"
-                    "}"
-                    "QPushButton:hover {"
-                    "  border-color: #f85149; color: #f85149;"
-                    "}"
-                )
+                btn_del.setStyleSheet(_small_btn_style)
                 btn_del.setToolTip("删除此配置")
                 btn_del.clicked.connect(
                     lambda checked, idx=i: (
