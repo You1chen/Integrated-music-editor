@@ -521,7 +521,7 @@ def show_ai_assist_dialog(
                 "}"
             )
             btn_fill.clicked.connect(
-                lambda tp=txt_path: _fill_pattern_match(rd, rd_edit.toPlainText(), tp)
+                lambda: _fill_pattern_match(rd, rd_edit.toPlainText(), txt_path)
             )
             rd_btns.addWidget(btn_fill)
 
