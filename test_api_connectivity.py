@@ -18,7 +18,7 @@ import threading
 from ctypes import wintypes
 
 from openai import OpenAI
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -247,33 +247,36 @@ class TestWindow(QDialog):
 
         self._test_done[0] = False
 
-        def _work() -> None:
-            try:
-                client = OpenAI(
-                    api_key=key,
-                    base_url=DEEPSEEK_BASE_URL,
-                    timeout=15.0,
-                )
-                response = client.chat.completions.create(
-                    model=DEEPSEEK_MODEL,
-                    messages=[{"role": "user", "content": "Hi"}],
-                    max_tokens=5,
-                )
-                if not self._test_done[0]:
-                    self._test_done[0] = True
-                    content = response.choices[0].message.content
-                    QTimer.singleShot(
-                        0,
-                        lambda: self._on_result(
-                            True, f"连接成功 ✓\n响应: {content}"
-                        ),
+        class _TestWorker(QThread):
+            result_ready = pyqtSignal(bool, str)
+            def __init__(self, api_key, parent=None):
+                super().__init__(parent)
+                self._api_key = api_key
+            def run(self):
+                try:
+                    client = OpenAI(
+                        api_key=self._api_key,
+                        base_url=DEEPSEEK_BASE_URL,
+                        timeout=15.0,
                     )
-            except Exception as e:
-                if not self._test_done[0]:
-                    self._test_done[0] = True
-                    QTimer.singleShot(0, lambda: self._on_result(False, str(e)))
+                    response = client.chat.completions.create(
+                        model=DEEPSEEK_MODEL,
+                        messages=[{"role": "user", "content": "Hi"}],
+                        max_tokens=5,
+                    )
+                    content = response.choices[0].message.content or ""
+                    self.result_ready.emit(True, f"连接成功 ✓\n响应: {content}")
+                except Exception as e:
+                    self.result_ready.emit(False, str(e))
 
-        threading.Thread(target=_work, daemon=True).start()
+        def _on_worker_done(ok: bool, msg: str) -> None:
+            if not self._test_done[0]:
+                self._test_done[0] = True
+                self._on_result(ok, msg)
+
+        self._worker = _TestWorker(key, parent=self)
+        self._worker.result_ready.connect(_on_worker_done)
+        self._worker.start()
 
         # Watchdog: 20 second timeout
         self._watchdog = QTimer(self)
@@ -347,3 +350,33 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# # ═══════════════════════════════════════════════════════════════════════
+# # Minimal non-GUI test
+# # ═══════════════════════════════════════════════════════════════════════
+
+# from openai import OpenAI
+
+# API_KEY = input("API Key: ").strip()
+# if not API_KEY:
+#     print("No key provided, exiting.")
+#     exit(1)
+
+# BASE_URL = "https://api.deepseek.com"
+# MODEL = "deepseek-v4-flash"
+
+# print(f"Testing {MODEL} @ {BASE_URL} ...")
+# print(f"Key: {API_KEY[:12]}...{API_KEY[-4:]}" if len(API_KEY) > 16 else f"Key: {API_KEY[:4]}****")
+
+# client = OpenAI(api_key=API_KEY, base_url=BASE_URL, timeout=15.0)
+
+# try:
+#     response = client.chat.completions.create(
+#         model=MODEL,
+#         messages=[{"role": "user", "content": "Hi"}],
+#         max_tokens=10,
+#     )
+#     print(f"SUCCESS: {response.choices[0].message.content}")
+# except Exception as e:
+#     print(f"FAILED: {e}")

@@ -23,6 +23,48 @@ def _extract_base_url(api_url: str) -> str:
     library expects (strip trailing /v1/chat/completions or /chat/completions)."""
     return re.sub(r"/(v1/)?chat/completions/?$", "", api_url)
 
+
+from PyQt6.QtCore import QThread as _QThread, pyqtSignal as _pyqtSignal
+
+class _ApiWorker(_QThread):
+    """QThread-based API worker — avoids Windows threading issues with httpx."""
+    result_ready = _pyqtSignal(bool, str)  # ok, message/error
+
+    def __init__(self, api_key: str, api_url: str, model: str,
+                 messages: list[dict], timeout: float = 15.0,
+                 temperature: float | None = None,
+                 max_tokens: int | None = 5,
+                 parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._api_url = api_url
+        self._model = model
+        self._messages = messages
+        self._timeout = timeout
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+
+    def run(self) -> None:
+        try:
+            client = OpenAI(
+                api_key=self._api_key,
+                base_url=_extract_base_url(self._api_url),
+                timeout=self._timeout,
+            )
+            kwargs: dict = {
+                "model": self._model,
+                "messages": self._messages,
+            }
+            if self._temperature is not None:
+                kwargs["temperature"] = self._temperature
+            if self._max_tokens is not None:
+                kwargs["max_tokens"] = self._max_tokens
+            response = client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content or ""
+            self.result_ready.emit(True, content)
+        except Exception as e:
+            self.result_ready.emit(False, str(e))
+
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
@@ -296,37 +338,13 @@ def show_ai_assist_dialog(
         _anim_dots2()
         progress.show()
 
-        _api_result: list[str | None] = [None]
-        _api_error: list[str | None] = [None]
-        _api_done = [False]
-
-        def _call_api() -> None:
-            try:
-                client = OpenAI(api_key=api_key, base_url=_extract_base_url(api_url), timeout=180.0)
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                )
-                content = response.choices[0].message.content
-                _api_result[0] = content
-            except Exception as e:
-                _api_error[0] = str(e)
-            finally:
-                _api_done[0] = True
-
-        threading.Thread(target=_call_api, daemon=True).start()
-
-        def _poll_api() -> None:
-            if not _api_done[0]:
-                return
-            _poll_timer.stop()
+        def _on_translate_done(ok: bool, content: str) -> None:
             dots_timer2.stop()
             progress.accept()
             progress.deleteLater()
 
-            if _api_error[0]:
-                err_msg = _api_error[0]
+            if not ok:
+                err_msg = content
                 masked_key = api_key[:8] + "****" + api_key[-4:] if len(api_key) > 12 else "****"
                 detail = (
                     f"错误：{err_msg}\n\n"
@@ -354,8 +372,7 @@ def show_ai_assist_dialog(
                 QMessageBox.critical(dialog, "API 调用失败", detail)
                 return
 
-            response_text = _api_result[0]
-            if not response_text:
+            if not content:
                 QMessageBox.warning(
                     dialog, "AI 返回空内容",
                     "API 调用成功但未返回任何翻译文本。"
@@ -363,8 +380,8 @@ def show_ai_assist_dialog(
                 return
 
             # ── Save to txt next to the LRC source file ──
-            ok, out_path = _save_translation_txt(response_text)
-            if not ok:
+            saved, out_path = _save_translation_txt(content)
+            if not saved:
                 QMessageBox.critical(
                     dialog, "文件写入失败",
                     f"无法写入翻译文件：\n{out_path}"
@@ -372,16 +389,22 @@ def show_ai_assist_dialog(
                 return
 
             # ── "翻译成功" confirm dialog ──
-            _show_done(out_path)
+            _show_done(out_path, content)
 
         def _save_translation_txt(text: str) -> "tuple[bool, str]":
-            lrc_path = mw.config.get_last_lrc_path()
-            if lrc_path:
-                stem = os.path.splitext(os.path.basename(lrc_path))[0]
-                out_dir = os.path.dirname(lrc_path)
+            # Prefer audio file name (matches the actual song), fall back to LRC
+            audio_src = mw.config.get_audio_src()
+            if audio_src and os.path.isfile(audio_src):
+                stem = os.path.splitext(os.path.basename(audio_src))[0]
+                out_dir = os.path.dirname(audio_src)
             else:
-                stem = "translation"
-                out_dir = os.path.expanduser("~")
+                lrc_path = mw.config.get_last_lrc_path()
+                if lrc_path:
+                    stem = os.path.splitext(os.path.basename(lrc_path))[0]
+                    out_dir = os.path.dirname(lrc_path)
+                else:
+                    stem = "translation"
+                    out_dir = os.path.expanduser("~")
             out_path = os.path.join(out_dir, f"{stem}_translation.txt")
             try:
                 with open(out_path, "w", encoding="utf-8") as f:
@@ -393,7 +416,7 @@ def show_ai_assist_dialog(
             except OSError:
                 return False, out_path
 
-        def _show_done(txt_path: str) -> None:
+        def _show_done(txt_path: str, response_text: str) -> None:
             done = QDialog(dialog)
             done.setWindowTitle("翻译成功")
             done.setFixedSize(420, 140)
@@ -431,7 +454,7 @@ def show_ai_assist_dialog(
                     done.accept(),
                     QTimer.singleShot(
                         50,
-                        lambda: _show_result(_api_result[0] or ""),
+                        lambda: _show_result(response_text or "", txt_path),
                     ),
                 )
             )
@@ -444,7 +467,7 @@ def show_ai_assist_dialog(
             d_layout.addLayout(d_btns)
             done.exec()
 
-        def _show_result(text: str) -> None:
+        def _show_result(text: str, txt_path: str = "") -> None:
             rd = QDialog()
             rd.setWindowTitle("翻译结果 — " + cfg.get("name", "API"))
             rd.resize(700, 500)
@@ -486,7 +509,7 @@ def show_ai_assist_dialog(
                 "}"
             )
             btn_fill.clicked.connect(
-                lambda: _fill_pattern_match(rd, rd_edit.toPlainText())
+                lambda tp=txt_path: _fill_pattern_match(rd, rd_edit.toPlainText(), tp)
             )
             rd_btns.addWidget(btn_fill)
 
@@ -499,7 +522,7 @@ def show_ai_assist_dialog(
             rd.exec()
 
         def _fill_pattern_match(
-            result_dialog: QDialog, text: str
+            result_dialog: QDialog, text: str, txt_path: str = ""
         ) -> None:
             # Save any user edits back to the txt file
             try:
@@ -523,9 +546,18 @@ def show_ai_assist_dialog(
                     lambda: sync_page._on_pattern_match(initial_text=text),
                 )
 
-        _poll_timer = QTimer(progress)
-        _poll_timer.timeout.connect(_poll_api)
-        _poll_timer.start(200)
+        _translate_worker = _ApiWorker(
+            api_key=api_key,
+            api_url=api_url,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=180.0,
+            temperature=0.3,
+            max_tokens=None,  # no limit for translation
+            parent=progress,
+        )
+        _translate_worker.result_ready.connect(_on_translate_done)
+        _translate_worker.start()
 
     # ── Build the model-list page ──
     def _build_model_list() -> None:
@@ -624,21 +656,6 @@ def show_ai_assist_dialog(
                 def _handler() -> None:
                     btn.setEnabled(False)
                     btn.setText("…")
-                    def _work() -> None:
-                        try:
-                            client = OpenAI(
-                                api_key=c["api_key"],
-                                base_url=_extract_base_url(c["url"]),
-                                timeout=10.0,
-                            )
-                            client.chat.completions.create(
-                                model=c["model"],
-                                messages=[{"role": "user", "content": "Hi"}],
-                                max_tokens=5,
-                            )
-                            QTimer.singleShot(0, lambda: _done(True, "✓"))
-                        except Exception as e:
-                            QTimer.singleShot(0, lambda: _done(False, str(e)))
                     def _done(ok: bool, msg: str) -> None:
                         btn.setEnabled(True)
                         if ok:
@@ -663,7 +680,16 @@ def show_ai_assist_dialog(
                                 )
                             )
                             btn.setToolTip(f"连接失败：{msg}")
-                    threading.Thread(target=_work, daemon=True).start()
+                    worker = _ApiWorker(
+                        api_key=c["api_key"],
+                        api_url=c["url"],
+                        model=c["model"],
+                        messages=[{"role": "user", "content": "Hi"}],
+                        timeout=10.0,
+                        parent=btn,
+                    )
+                    worker.result_ready.connect(_done)
+                    worker.start()
                 return _handler
 
             btn_test.clicked.connect(_make_test_handler(btn_test, cfg))
@@ -819,28 +845,6 @@ def show_ai_assist_dialog(
             btn_test_save.setText("测试中…")
             feedback.hide()
 
-            _test_done = [False]
-
-            def _do_test() -> None:
-                try:
-                    client = OpenAI(
-                        api_key=k,
-                        base_url=_extract_base_url(u),
-                        timeout=10.0,
-                    )
-                    client.chat.completions.create(
-                        model=m or "default",
-                        messages=[{"role": "user", "content": "Hi"}],
-                        max_tokens=5,
-                    )
-                    if not _test_done[0]:
-                        _test_done[0] = True
-                        QTimer.singleShot(0, lambda: _on_test_result(True, "连接成功 ✓"))
-                except Exception as e:
-                    if not _test_done[0]:
-                        _test_done[0] = True
-                        QTimer.singleShot(0, lambda: _on_test_result(False, str(e)))
-
             def _on_test_result(ok: bool, msg: str) -> None:
                 _watchdog.stop()
                 btn_test_save.setEnabled(True)
@@ -868,16 +872,21 @@ def show_ai_assist_dialog(
                 else:
                     _show_feedback(f"连接失败，未保存：{msg}", True)
 
-            threading.Thread(target=_do_test, daemon=True).start()
+            worker = _ApiWorker(
+                api_key=k,
+                api_url=u,
+                model=m or "default",
+                messages=[{"role": "user", "content": "Hi"}],
+                timeout=10.0,
+                parent=form_page,
+            )
+            worker.result_ready.connect(_on_test_result)
+            worker.start()
 
             _watchdog = QTimer(form_page)
             _watchdog.setSingleShot(True)
             _watchdog.timeout.connect(
-                lambda: (
-                    _on_test_result(False, "连接超时（15 秒无响应）")
-                    if not _test_done[0]
-                    else None
-                )
+                lambda: _on_test_result(False, "连接超时（15 秒无响应）")
             )
             _watchdog.start(15000)
 
