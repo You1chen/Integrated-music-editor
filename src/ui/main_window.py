@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QLineEdit,
@@ -136,6 +136,10 @@ class MainWindow(QMainWindow):
 
         # Show home page by default
         self.content_stack.set_page(PageRoute.HOME)
+
+        # Welcome dialog on startup (skipped when disabled in preferences)
+        if self.config.get_show_welcome():
+            QTimer.singleShot(400, self._show_welcome_dialog)
 
         # ── Install app-wide event filter for keyboard shortcuts ──
         # Must be on QApplication (not self) so that key events are
@@ -324,6 +328,44 @@ class MainWindow(QMainWindow):
         except Exception:
             pass  # Prevent crash during audio metadata update
 
+        # ── Auto-load same-name LRC ───────────────────────────
+        self._try_load_matching_lrc()
+
+    def _try_load_matching_lrc(self) -> None:
+        """If a .lrc or .txt file with the same stem as the audio exists
+        in the same directory, load it automatically.
+        """
+        import os
+        src = self.audio_manager.src
+        if not src:
+            return
+        path = QUrl(src).toLocalFile()
+        if not path or not os.path.isfile(path):
+            return
+
+        base, _ = os.path.splitext(path)
+        for ext in (".lrc", ".txt"):
+            lrc_path = base + ext
+            if not os.path.exists(lrc_path):
+                continue
+            try:
+                with open(lrc_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                self.lrc_state.init_from_text(
+                    text=text,
+                    options=self._trim_options,
+                    select=0,
+                )
+                if self.config.get_remember_last_lrc():
+                    self.config.set_last_lrc_path(lrc_path)
+                self.toast_overlay.show_toast(
+                    "success",
+                    f"已自动加载同名歌词：{os.path.basename(lrc_path)}",
+                )
+            except Exception:
+                pass
+            return  # Only load the first match (.lrc preferred over .txt)
+
     def _on_sync_page_changed(self, active: bool) -> None:
         if active:
             # Connect audio time -> lrc refresh
@@ -349,6 +391,79 @@ class MainWindow(QMainWindow):
             self.config.set_select_index(self.lrc_state.select_index)
 
     # ── Public Helpers ──────────────────────────────────────
+
+    def _show_welcome_dialog(self) -> None:
+        """Show the welcome guide on startup (one-shot, can be disabled).
+
+        Contains the old HomePage content: a 3-step getting-started guide
+        with a "don't show again" checkbox that persists to preferences.
+        """
+        from PyQt6.QtWidgets import (
+            QCheckBox,
+            QDialog,
+            QDialogButtonBox,
+            QLabel,
+            QPushButton,
+            QVBoxLayout as QVBL,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("欢迎使用集成歌曲编辑器")
+        dlg.setMinimumSize(440, 380)
+
+        lay = QVBL(dlg)
+        lay.setContentsMargins(28, 24, 28, 16)
+        lay.setSpacing(14)
+
+        # ── Title ──
+        title = QLabel("集成歌曲编辑器")
+        title.setStyleSheet("font-size: 24px; font-weight: bold;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(title)
+
+        # ── Steps ──
+        for text in [
+            "1. 切换到「歌词制作」页面，导入或粘贴歌词文本。",
+            "2. 点击左下方按钮载入音频文件，或直接拖入。",
+            "3. 播放音频、按空格键，就能逐行打时间轴啦～",
+        ]:
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("font-size: 15px;")
+            lay.addWidget(lbl)
+
+        lay.addSpacing(8)
+
+        # ── Quick-jump button ──
+        btn_sync = QPushButton("→ 前往歌词制作")
+        btn_sync.setStyleSheet(
+            "QPushButton { font-size: 15px; padding: 8px 16px; }"
+        )
+        btn_sync.clicked.connect(lambda: (
+            self.content_stack.set_page(PageRoute.SYNCHRONIZER),
+            dlg.accept(),
+        ))
+        lay.addWidget(btn_sync, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        lay.addStretch()
+
+        # ── "Don't show again" ──
+        cb = QCheckBox("启动时不再显示此引导")
+        cb.setStyleSheet("font-size: 13px; color: #888888;")
+        lay.addWidget(cb)
+
+        # ── Close button ──
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        dlg.exec()
+
+        # Persist preference
+        if cb.isChecked():
+            prefs = self.config.get_preferences()
+            prefs["showWelcome"] = False
+            self.config.set_preferences(prefs)
 
     def _show_help_dialog(self) -> None:
         """Show the help / about dialog with feature overview and tips."""

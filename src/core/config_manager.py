@@ -220,6 +220,10 @@ class ConfigManager:
     def get_show_save_warning(self) -> bool:
         return self.get_preferences().get("showSaveWarning", True)
 
+    def get_show_welcome(self) -> bool:
+        """Whether to show the welcome/guide dialog on startup."""
+        return self.get_preferences().get("showWelcome", True)
+
     def get_show_draft_warning(self) -> bool:
         return self.get_preferences().get("showDraftWarning", True)
 

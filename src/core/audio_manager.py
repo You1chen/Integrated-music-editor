@@ -44,6 +44,7 @@ class AudioManager(QObject):
     state_changed = pyqtSignal(AudioStateData)
     error_occurred = pyqtSignal(str)
     duration_changed = pyqtSignal(float)
+    meta_data_changed = pyqtSignal()
 
     _MS_TO_SEC = 0.001
     _TIMER_INTERVAL = 16  # ~60fps, matches requestAnimationFrame
@@ -65,6 +66,7 @@ class AudioManager(QObject):
         self._player.durationChanged.connect(self._on_duration_changed)
         self._player.playbackStateChanged.connect(self._on_playback_state_changed)
         self._player.errorOccurred.connect(self._on_error)
+        self._player.metaDataChanged.connect(self.meta_data_changed.emit)
 
     # ── Property Accessors (match audioRef API) ────────────────
 
@@ -158,6 +160,28 @@ class AudioManager(QObject):
         """Set the audio source URL."""
         qurl = QUrl(url)
         self._player.setSource(qurl)
+
+    @property
+    def cover_image(self):
+        """Try to extract embedded cover art from audio metadata.
+
+        Returns a QPixmap on success, or None when no cover is embedded.
+        Safe to call from any thread — catches all exceptions internally.
+        """
+        try:
+            from PyQt6.QtMultimedia import QMediaMetaData
+            meta = self._player.metaData()
+            for key in (QMediaMetaData.Key.CoverArtImage,
+                        QMediaMetaData.Key.ThumbnailImage):
+                variant = meta.value(key)
+                if variant.isValid():
+                    from PyQt6.QtGui import QImage, QPixmap
+                    img = variant.value(QImage)
+                    if img and not img.isNull():
+                        return QPixmap.fromImage(img)
+        except Exception:
+            pass
+        return None
 
     # ── Internal Signal Handlers ───────────────────────────────
 

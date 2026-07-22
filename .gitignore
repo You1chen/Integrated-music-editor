@@ -8,3 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Project docs / personal notes
+教材.md
+launcher.c
+PROGRESS.md
+STRUCTURE.md
+
+# Test / debug scripts
+test.py
+test_api_connectivity.py

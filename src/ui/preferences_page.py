@@ -211,6 +211,11 @@ class PreferencesPage(QScrollArea):
         self._builtin_audio_cb.toggled.connect(self._on_toggle_changed)
         display_layout.addRow("使用内置音频播放器:", self._builtin_audio_cb)
 
+        self._show_welcome_cb = QCheckBox()
+        self._show_welcome_cb.setChecked(self._mw.config.get_show_welcome())
+        self._show_welcome_cb.toggled.connect(self._on_toggle_changed)
+        display_layout.addRow("启动时显示欢迎引导:", self._show_welcome_cb)
+
         display.set_content_layout(display_layout)
         layout.addWidget(display)
 
@@ -588,6 +593,7 @@ class PreferencesPage(QScrollArea):
         prefs["defaultBrowseDir"] = self._browse_dir_input.text()
         prefs["defaultCoverBrowseDir"] = self._cover_browse_dir_input.text()
         prefs["rememberPlaybackRate"] = self._remember_rate_cb.isChecked()
+        prefs["showWelcome"] = self._show_welcome_cb.isChecked()
         prefs["showSaveWarning"] = self._show_save_warning_cb.isChecked()
         prefs["showDraftWarning"] = self._show_draft_warning_cb.isChecked()
         prefs["enableSmartImport"] = self._enable_smart_import_cb.isChecked()

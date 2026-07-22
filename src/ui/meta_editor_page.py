@@ -523,14 +523,16 @@ class MetaEditorPage(QScrollArea):
         cover_vlayout = QVBoxLayout(cover_group)
         cover_vlayout.setSpacing(6)
 
+        picsize = 180
+
         self._cover_thumbnail = QPushButton("无封面")
-        self._cover_thumbnail.setFixedSize(200, 200)
+        self._cover_thumbnail.setFixedSize(picsize, picsize)
         self._cover_thumbnail.setIconSize(self._cover_thumbnail.size())
         self._cover_thumbnail.setFlat(True)
         self._cover_thumbnail.setCursor(Qt.CursorShape.PointingHandCursor)
         self._cover_thumbnail.setStyleSheet(
             "QPushButton {"
-            "  border: 1px solid palette(mid); border-radius: 4px;"
+            "  border: none; border-radius: 4px;"
             "  background: transparent; font-size: 12px;"
             "}"
             "QPushButton:hover {"
@@ -543,7 +545,7 @@ class MetaEditorPage(QScrollArea):
         self._cover_info = QLabel("")
         self._cover_info.setStyleSheet("font-size: 11px; color: gray;")
         self._cover_info.setWordWrap(True)
-        self._cover_info.setMaximumWidth(200)
+        self._cover_info.setMaximumWidth(picsize)
         cover_vlayout.addWidget(self._cover_info)
 
         browse_cover_btn = QPushButton("浏览...")

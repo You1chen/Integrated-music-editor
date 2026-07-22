@@ -1,7 +1,7 @@
 {
   "device_id": "54996c22-b73a-4598-8e71-3b08be8de812",
   "device_label": "Windows",
-  "saved_at": 1784637047,
+  "saved_at": 1784707438,
   "active_index": 3,
   "tabs": [
     {
@@ -31,6 +31,13 @@
       "cursor_line": null,
       "cursor_col": null,
       "rel_path": "教材.md"
+    },
+    {
+      "file_path": "D:\\lrc\\lrc-maker-python\\STRUCTURE.md",
+      "file_name": "STRUCTURE.md",
+      "cursor_line": null,
+      "cursor_col": null,
+      "rel_path": "STRUCTURE.md"
     }
   ]
 }
