@@ -749,3 +749,68 @@ self._btn_import = QPushButton("导入")
 - [ ] API 自动可考虑每次调用输入密码验证
 - [ ] 可添加更多 AI 聊天网站链接
 
+---
+
+## 2026-07-22：API 自动翻译修复 —— urllib → openai 库 + QThread
+
+### 背景
+
+AI 辅助翻译（API 自动）功能上线后发现连接始终不成功——不是报错，而是一直卡住无响应。经过排查，根因有两个层面。
+
+### 根因分析
+
+#### 第一层：urllib.request 在 Windows 上调用 DeepSeek API 失败
+
+最初的 API 调用使用标准库 `urllib.request`：
+
+```python
+req = urllib.request.Request(url, data=body, headers={...})
+urllib.request.urlopen(req, timeout=180)
+```
+
+而用户手动写的 `test.py` 使用 `openai` 库却能成功：
+
+```python
+client = OpenAI(api_key=..., base_url="https://api.deepseek.com")
+client.chat.completions.create(model=..., messages=[...])
+```
+
+对比后发现：`openai` 底层用 `httpx`，`urllib` 的默认行为（无 User-Agent、SSL 差异等）导致 DeepSeek API 网关拒绝连接。
+
+**修复**：三处 API 调用全部从 `urllib.request` 改为 `openai.OpenAI`，新增 `_extract_base_url()` 辅助函数把完整 URL（如 `https://api.deepseek.com/v1/chat/completions`）转为 `openai` 需要的 base_url（`https://api.deepseek.com`）。
+
+#### 第二层：threading.Thread + httpx 在 Windows 上死锁
+
+切换 `openai` 库后，极简命令行版（主线程）能跑通，但 GUI 版（`threading.Thread` 后台线程）依然卡死。原因是 `httpx`（openai 底层 HTTP 库）在 Windows 非主线程中存在兼容性问题——同步 `create()` 调用无限阻塞，不抛异常也不返回。
+
+**修复**：创建 `_ApiWorker(QThread)` 类替代 `threading.Thread`，QThread 是 Qt 的原生线程，在 Windows 上和 `httpx` 兼容。三处 API 调用（翻译、模型列表测、配置表单测）全部改为 `_ApiWorker`，通过 `pyqtSignal` 把结果传回主线程。
+
+#### 第三层：openai 默认超时 10 分钟
+
+`openai.OpenAI()` 底层 `httpx` 默认超时 600 秒。不加 `timeout` 参数时，请求一旦卡住就等 10 分钟。
+
+**修复**：翻译接口设 `timeout=180.0`（长提示词需要时间），测试接口设 `timeout=10.0`。
+
+### 附加修复
+
+| 问题 | 修复 |
+|------|------|
+| 翻译文件名用错歌名（`Yellow Star Beats_translation.txt`） | `_save_translation_txt` 优先取当前音频文件名，不再依赖可能过时的 LRC 路径 |
+| "填入模式匹配"按钮报错 `NameError: name 'txt_path' is not defined` | `txt_path` 从 `_show_done` → `_show_result` → `_fill_pattern_match` 逐层传参 |
+| API Key 明文在异常日志中出现过长 | 错误提示中 Key 只显示前 8 位 + `****` + 后 4 位 |
+
+### 新增文件
+
+| 文件 | 用途 |
+|------|------|
+| `test_api_connectivity.py` | 独立的 API 连通性测试工具（GUI + 命令行双模式），使用 `openai` 库 |
+
+### 修改文件
+
+| 文件 | 主要变更 |
+|------|---------|
+| `src/ui/synchronizer/_ai_assist.py` | urllib → openai 库；threading.Thread → _ApiWorker(QThread)；超时参数；翻译文件名修复；txt_path 传参修复 |
+| `test_api_connectivity.py` | threading.Thread → _TestWorker(QThread) |
+
+**相关提交**：`a676fb2`, `96bc806`
+
