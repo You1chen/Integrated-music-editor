@@ -510,6 +510,71 @@ class MetaEditorPage(QScrollArea):
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(12)
 
+        # ── Main left-right split ──
+        main_split = QHBoxLayout()
+        main_split.setSpacing(12)
+
+        # ==== Left side: cover + save button ====
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(12)
+
+        # ---- Cover art ----
+        cover_group = QGroupBox("封面图片")
+        cover_vlayout = QVBoxLayout(cover_group)
+        cover_vlayout.setSpacing(6)
+
+        self._cover_thumbnail = QPushButton("无封面")
+        self._cover_thumbnail.setFixedSize(200, 200)
+        self._cover_thumbnail.setIconSize(self._cover_thumbnail.size())
+        self._cover_thumbnail.setFlat(True)
+        self._cover_thumbnail.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cover_thumbnail.setStyleSheet(
+            "QPushButton {"
+            "  border: 1px solid palette(mid); border-radius: 4px;"
+            "  background: transparent; font-size: 12px;"
+            "}"
+            "QPushButton:hover {"
+            "  border: 2px solid palette(highlight);"
+            "}"
+        )
+        self._cover_thumbnail.clicked.connect(self._on_browse_cover)
+        cover_vlayout.addWidget(self._cover_thumbnail)
+
+        self._cover_info = QLabel("")
+        self._cover_info.setStyleSheet("font-size: 11px; color: gray;")
+        self._cover_info.setWordWrap(True)
+        self._cover_info.setMaximumWidth(200)
+        cover_vlayout.addWidget(self._cover_info)
+
+        browse_cover_btn = QPushButton("浏览...")
+        browse_cover_btn.clicked.connect(self._on_browse_cover)
+        cover_vlayout.addWidget(browse_cover_btn)
+
+        clear_cover_btn = QPushButton("清除")
+        clear_cover_btn.clicked.connect(self._on_clear_cover)
+        cover_vlayout.addWidget(clear_cover_btn)
+
+        left_layout.addWidget(cover_group)
+
+        # ---- Save button (unnamed container) ----
+        save_container = QWidget()
+        save_vlayout = QVBoxLayout(save_container)
+        save_vlayout.setContentsMargins(0, 0, 0, 0)
+        self._save_btn = QPushButton("保存到音频文件")
+        self._save_btn.setStyleSheet(
+            "font-size: 15px; font-weight: bold; padding: 8px 24px;"
+        )
+        self._save_btn.clicked.connect(self._on_save)
+        save_vlayout.addWidget(self._save_btn)
+        left_layout.addWidget(save_container)
+
+        left_layout.addStretch()
+        main_split.addLayout(left_layout)
+
+        # ==== Right side: text fields ====
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(12)
+
         # ---- Standard text fields ----
         text_group = QGroupBox("基本信息")
         text_form = QFormLayout(text_group)
@@ -522,71 +587,11 @@ class MetaEditorPage(QScrollArea):
             text_form.addRow(f"{label}:", inp)
             self._inputs[key] = inp
 
-        editor_layout.addWidget(text_group)
+        right_layout.addWidget(text_group)
+        right_layout.addStretch()
+        main_split.addLayout(right_layout, stretch=1)
 
-        # ---- Cover art ----
-        cover_group = QGroupBox("封面图片")
-        cover_hlayout = QHBoxLayout(cover_group)
-        cover_hlayout.setSpacing(12)
-
-        # thumbnail + path
-        cover_left = QVBoxLayout()
-        cover_left.setSpacing(6)
-
-        self._cover_thumbnail = QPushButton("无封面")
-        self._cover_thumbnail.setFixedSize(140, 140)
-        self._cover_thumbnail.setIconSize(self._cover_thumbnail.size())
-        self._cover_thumbnail.setFlat(True)
-        self._cover_thumbnail.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._cover_thumbnail.setStyleSheet(
-            "QPushButton {"
-            "  border: 1px solid palette(mid); border-radius: 4px;"
-            "  background: palette(midlight); font-size: 12px;"
-            "}"
-            "QPushButton:hover {"
-            "  border: 2px solid palette(highlight);"
-            "}"
-        )
-        self._cover_thumbnail.clicked.connect(self._on_browse_cover)
-        cover_left.addWidget(self._cover_thumbnail)
-
-        self._cover_info = QLabel("")
-        self._cover_info.setStyleSheet("font-size: 11px; color: gray;")
-        self._cover_info.setWordWrap(True)
-        self._cover_info.setMaximumWidth(140)
-        cover_left.addWidget(self._cover_info)
-
-        cover_hlayout.addLayout(cover_left)
-
-        # buttons
-        cover_right = QVBoxLayout()
-        cover_right.setSpacing(6)
-
-        browse_cover_btn = QPushButton("浏览...")
-        browse_cover_btn.clicked.connect(self._on_browse_cover)
-        cover_right.addWidget(browse_cover_btn)
-
-        clear_cover_btn = QPushButton("清除")
-        clear_cover_btn.clicked.connect(self._on_clear_cover)
-        cover_right.addWidget(clear_cover_btn)
-
-        cover_right.addStretch()
-        cover_hlayout.addLayout(cover_right)
-
-        editor_layout.addWidget(cover_group)
-
-        # ---- Save button ----
-        save_layout = QHBoxLayout()
-        save_layout.addStretch()
-        self._save_btn = QPushButton("保存到音频文件")
-        self._save_btn.setStyleSheet(
-            "font-size: 15px; font-weight: bold; padding: 8px 24px;"
-        )
-        self._save_btn.clicked.connect(self._on_save)
-        save_layout.addWidget(self._save_btn)
-        save_layout.addStretch()
-        editor_layout.addLayout(save_layout)
-
+        editor_layout.addLayout(main_split)
         editor_layout.addStretch()
 
         layout.addWidget(self._editor)
@@ -864,9 +869,15 @@ class MetaEditorPage(QScrollArea):
         if data:
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
+                # Square → stretch to fill; rectangle → fit keeping ratio
+                mode = (
+                    Qt.AspectRatioMode.IgnoreAspectRatio
+                    if pixmap.width() == pixmap.height()
+                    else Qt.AspectRatioMode.KeepAspectRatio
+                )
                 pixmap = pixmap.scaled(
                     140, 140,
-                    Qt.AspectRatioMode.KeepAspectRatio,
+                    mode,
                     Qt.TransformationMode.SmoothTransformation,
                 )
                 self._cover_thumbnail.setIcon(QIcon(pixmap))
