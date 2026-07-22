@@ -226,11 +226,26 @@ class ConfigManager:
     def get_enable_smart_import(self) -> bool:
         return self.get_preferences().get("enableSmartImport", True)
 
+    def get_reaction_time_ms(self) -> int:
+        """Reaction time offset in milliseconds (default 100ms).
+
+        When stamping a timestamp, the captured audio time is shifted
+        backward by this amount to compensate for human reaction delay.
+        """
+        return self.get_preferences().get("reactionTimeMs", 100)
+
     def get_remember_draft(self) -> bool:
         return self.get_preferences().get("rememberDraft", True)
 
     def get_default_browse_dir(self) -> str:
         return self.get_preferences().get("defaultBrowseDir", "D:/歌手")
+
+    def get_default_cover_browse_dir(self) -> str:
+        """Default directory for browsing cover art images."""
+        return self.get_preferences().get(
+            "defaultCoverBrowseDir",
+            self.get_default_browse_dir(),
+        )
 
     def get_last_lrc_path(self) -> str:
         return self._load_config().get("lastLrcPath", "")

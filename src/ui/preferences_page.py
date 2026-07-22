@@ -252,6 +252,21 @@ class PreferencesPage(QScrollArea):
 
         file_memory_layout.addRow("默认浏览目录:", browse_layout)
 
+        # Default cover browse directory
+        cover_browse_layout = QHBoxLayout()
+        self._cover_browse_dir_input = QLineEdit()
+        self._cover_browse_dir_input.setText(
+            self._mw.config.get_default_cover_browse_dir()
+        )
+        self._cover_browse_dir_input.textChanged.connect(self._on_file_memory_changed)
+        cover_browse_layout.addWidget(self._cover_browse_dir_input)
+
+        cover_browse_btn = QPushButton("浏览...")
+        cover_browse_btn.clicked.connect(self._on_cover_browse_dir)
+        cover_browse_layout.addWidget(cover_browse_btn)
+
+        file_memory_layout.addRow("默认封面浏览目录:", cover_browse_layout)
+
         self._remember_rate_cb = QCheckBox()
         self._remember_rate_cb.setChecked(self._mw.config.get_remember_playback_rate())
         self._remember_rate_cb.toggled.connect(self._on_toggle_changed)
@@ -286,6 +301,17 @@ class PreferencesPage(QScrollArea):
         # ── Sync Assist ──────────────────────────────
         sync = _CollapsibleGroup("打轴辅助", expanded=False)
         sync_layout = QFormLayout()
+
+        self._reaction_time = QSpinBox()
+        self._reaction_time.setRange(0, 500)
+        self._reaction_time.setSingleStep(10)
+        self._reaction_time.setValue(prefs.get("reactionTimeMs", 100))
+        self._reaction_time.setSuffix(" ms")
+        self._reaction_time.setToolTip(
+            "按下空格时，时间戳会向前偏移这个毫秒数，用于补偿听到下一句到按下按键之间的反应延迟"
+        )
+        self._reaction_time.valueChanged.connect(self._on_toggle_changed)
+        sync_layout.addRow("反应时间:", self._reaction_time)
 
         self._auto_seek_cb = QCheckBox()
         self._auto_seek_cb.setChecked(prefs.get("autoSeekVerify", False))
@@ -560,10 +586,12 @@ class PreferencesPage(QScrollArea):
         prefs["rememberLastLrc"] = self._remember_lrc_cb.isChecked()
         prefs["rememberLastMp3"] = self._remember_mp3_cb.isChecked()
         prefs["defaultBrowseDir"] = self._browse_dir_input.text()
+        prefs["defaultCoverBrowseDir"] = self._cover_browse_dir_input.text()
         prefs["rememberPlaybackRate"] = self._remember_rate_cb.isChecked()
         prefs["showSaveWarning"] = self._show_save_warning_cb.isChecked()
         prefs["showDraftWarning"] = self._show_draft_warning_cb.isChecked()
         prefs["enableSmartImport"] = self._enable_smart_import_cb.isChecked()
+        prefs["reactionTimeMs"] = self._reaction_time.value()
         prefs["autoSeekVerify"] = self._auto_seek_cb.isChecked()
         prefs["autoSeekDelay"] = self._auto_seek_delay.value()
         self._mw.update_preferences(prefs)
@@ -579,6 +607,17 @@ class PreferencesPage(QScrollArea):
         )
         if dir_path:
             self._browse_dir_input.setText(dir_path)
+            self._save_prefs()
+
+    def _on_cover_browse_dir(self) -> None:
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "选择默认封面浏览目录",
+            self._cover_browse_dir_input.text()
+            or self._mw.config.get_default_browse_dir(),
+        )
+        if dir_path:
+            self._cover_browse_dir_input.setText(dir_path)
             self._save_prefs()
 
     def _update_color_buttons(self, selected: str) -> None:

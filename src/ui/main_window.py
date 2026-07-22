@@ -279,7 +279,7 @@ class MainWindow(QMainWindow):
             self.audio_manager.toggle()
             return True
         elif action == InputAction.SHOW_HELP:
-            self.content_stack.set_page(PageRoute.HOME)
+            self._show_help_dialog()
             return True
         elif action == InputAction.UNDO:
             self.lrc_state.undo()
@@ -349,6 +349,186 @@ class MainWindow(QMainWindow):
             self.config.set_select_index(self.lrc_state.select_index)
 
     # ── Public Helpers ──────────────────────────────────────
+
+    def _show_help_dialog(self) -> None:
+        """Show the help / about dialog with feature overview and tips."""
+        from PyQt6.QtWidgets import (
+            QDialog,
+            QDialogButtonBox,
+            QLabel,
+            QTabWidget,
+            QScrollArea,
+            QWidget,
+            QVBoxLayout as QVBL,
+            QHBoxLayout as QHBL,
+        )
+        from ..core.keybinding import (
+            ACTION_GROUPS,
+            ACTION_LABELS,
+            action_to_string,
+        )
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("帮助")
+        dialog.resize(680, 520)
+        dialog.setMinimumSize(560, 400)
+
+        layout = QVBL(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs, stretch=1)
+
+        # ── Helper: make a scrollable tab ──
+        def _make_tab(title: str) -> tuple[QScrollArea, QVBL]:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            container = QWidget()
+            lay = QVBL(container)
+            lay.setContentsMargins(24, 20, 24, 20)
+            lay.setSpacing(14)
+            scroll.setWidget(container)
+            tabs.addTab(scroll, title)
+            return scroll, lay
+
+        # ── Tab 1: 关于 ──
+        _, lay_about = _make_tab("关于")
+        for text, style in [
+            ("集成歌曲编辑器", "font-size: 22px; font-weight: bold;"),
+            (
+                "这是一款帮你为歌曲制作滚动歌词（LRC 歌词文件）的小工具。\n"
+                "边听歌边按空格键，就能轻松给每行歌词打上时间戳。",
+                "font-size: 14px; line-height: 1.6;",
+            ),
+            (
+                "✨ 你可以用它来：\n"
+                "• 给喜欢的歌曲制作精准的滚动歌词\n"
+                "• 为外语歌曲添加中文翻译\n"
+                "• 修正网上下载的歌词时间不准的问题\n"
+                "• 用 AI 帮忙翻译歌词\n"
+                "• 根据个人喜好调整主题颜色和显示风格",
+                "font-size: 13px; line-height: 1.8;",
+            ),
+            (
+                "💡 提示：按 ? 键可以随时打开这个帮助窗口",
+                "font-size: 12px; color: gray;",
+            ),
+        ]:
+            lbl = QLabel(text)
+            lbl.setStyleSheet(style)
+            lbl.setWordWrap(True)
+            lay_about.addWidget(lbl)
+        lay_about.addStretch()
+
+        # ── Tab 2: 使用流程 ──
+        _, lay_flow = _make_tab("使用流程")
+        steps = [
+            ("① 载入歌曲",
+             "点击左下角的加载按钮（或按 Ctrl+R），选择你的歌曲文件。\n"
+             "支持 MP3、FLAC、WAV 等常见格式。也可以直接把歌曲文件拖到窗口底部。"),
+            ("② 导入歌词",
+             "点击工具栏的「导入」按钮，选择歌词文件。\n"
+             "如果歌曲旁边有同名的歌词文件，软件会自动帮你找到它。\n"
+             "歌词文件可以是 .lrc 或 .txt 格式，每行一句歌词即可。"),
+            ("③ 开始打轴",
+             "这是最关键的一步！在「歌词制作」页面：\n"
+             "• 点击播放按钮开始听歌\n"
+             "• 听到某句歌词开始唱的时候，按空格键——这行歌词就自动记录下当前时间\n"
+             "• 光标会自动跳到下一行，继续听、继续按空格\n"
+             "• 下方的波形图可以帮助你判断歌词出现的位置"),
+            ("④ 检查和微调",
+             "• 点击某行的时间数字可以跳到那个位置重新听\n"
+             "• 如果时间不太对，选中那一行按 Backspace 删掉时间，重新打一次\n"
+             "• 双击歌词文字可以修改歌词内容\n"
+             "• 右键点击歌词行还有更多操作（拆分长句、插入空行等）"),
+            ("⑤ 保存导出",
+             "• 点击「保存」直接覆盖原来的歌词文件\n"
+             "• 点击「导出」另存为一个新文件\n"
+             "• 点击「预览」看看最终歌词文件长什么样"),
+        ]
+        for title, desc in steps:
+            title_lbl = QLabel(title)
+            title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
+            lay_flow.addWidget(title_lbl)
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet("font-size: 13px;")
+            desc_lbl.setWordWrap(True)
+            lay_flow.addWidget(desc_lbl)
+        lay_flow.addStretch()
+
+        # ── Tab 3: 实用技巧 ──
+        _, lay_tips = _make_tab("实用技巧")
+        tips = [
+            ("🎯 怎么打得准？",
+             "• 先粗打一遍，边听边按空格，不用纠结毫秒级精度\n"
+             "• 打完后再从头听一遍，发现不对的就选中按 Backspace 重打\n"
+             "• 善用波形图——歌词通常在有波峰的地方开始\n"
+             "• 可以调慢播放速度（右下角的滑块），在难打的部分放慢来听"),
+            ("⌨️ 键盘操作更高效",
+             "• 全程用键盘就能完成打轴，不需要频繁切换鼠标\n"
+             "• 空格打轴、↑↓ 选行、Backspace 删时间——这三个最常用\n"
+             "• 快捷键可以在「设置」页面里自定义成你习惯的按键"),
+            ("🌐 翻译歌词",
+             "• 点击「翻译模式」按钮，每行歌词下方会出现翻译输入框\n"
+             "• 如果你已有带翻译的歌词文件，用「模式匹配」可以自动匹配进去\n"
+             "• 「AI 辅助翻译」可以调用 AI 帮你批量翻译（需要配置 API Key）"),
+            ("🎨 个性化设置",
+             "• 在「设置」页面可以切换亮色/暗色主题\n"
+             "• 可以自定义主题色，选你喜欢的颜色\n"
+             "• 波形图、虚拟空格键等辅助功能都可以按需开关\n"
+             "• 歌词的时间精度（秒后几位）可以在设置中调整"),
+            ("💾 数据安全",
+             "• 你的歌词会随时自动保存为草稿，不小心关了软件也不会丢\n"
+             "• 每一步操作都可以撤销（Ctrl+Z）和重做（Ctrl+Y）"),
+        ]
+        for title, desc in tips:
+            title_lbl = QLabel(title)
+            title_lbl.setStyleSheet("font-size: 14px; font-weight: bold;")
+            lay_tips.addWidget(title_lbl)
+            desc_lbl = QLabel(desc)
+            desc_lbl.setStyleSheet("font-size: 13px;")
+            desc_lbl.setWordWrap(True)
+            lay_tips.addWidget(desc_lbl)
+        lay_tips.addStretch()
+
+        # ── Tab 4: 快捷键参考 ──
+        _, lay_keys = _make_tab("快捷键参考")
+        note = QLabel("下面列出了所有默认快捷键，你可以在「设置」页面修改它们。")
+        note.setStyleSheet("font-size: 12px; color: gray;")
+        note.setWordWrap(True)
+        lay_keys.addWidget(note)
+        for group_name, actions in ACTION_GROUPS:
+            group_lbl = QLabel(group_name)
+            group_lbl.setStyleSheet(
+                "font-size: 14px; font-weight: bold; margin-top: 4px;"
+            )
+            lay_keys.addWidget(group_lbl)
+            for act in actions:
+                label = ACTION_LABELS.get(act, act.value)
+                binding_str = action_to_string(act)
+                row = QHBL()
+                key_lbl = QLabel(binding_str)
+                key_lbl.setStyleSheet(
+                    "font-size: 12px; font-family: Consolas, monospace; "
+                    "background: palette(midlight); padding: 2px 8px; "
+                    "border-radius: 3px;"
+                )
+                key_lbl.setFixedWidth(200)
+                row.addWidget(key_lbl)
+                desc_lbl = QLabel(label)
+                desc_lbl.setStyleSheet("font-size: 13px;")
+                row.addWidget(desc_lbl, stretch=1)
+                lay_keys.addLayout(row)
+        lay_keys.addStretch()
+
+        # ── Close button ──
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        dialog.exec()
 
     def update_preferences(self, prefs: dict) -> None:
         """Apply preference changes to all components."""

@@ -43,6 +43,7 @@ class HeaderBar(QWidget):
         tabs = [
             (PageRoute.HOME, "主页"),
             (PageRoute.SYNCHRONIZER, "歌词制作"),
+            (PageRoute.META_EDITOR, "编辑元信息"),
             (PageRoute.PREFERENCES, "设置"),
         ]
 

@@ -463,7 +463,7 @@ def _is_light_color(r: int, g: int, b: int) -> bool:
 class ContentStack(QStackedWidget):
     """Page router using QStackedWidget.
 
-    Manages the 4 pages and their visibility.
+    Manages the 5 pages and their visibility.
     """
 
     sync_page_active_changed = pyqtSignal(bool)

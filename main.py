@@ -18,6 +18,7 @@ from src.ui.home_page import HomePage
 from src.ui.editor_page import EditorPage
 from src.ui.synchronizer_page import SynchronizerPage
 from src.ui.preferences_page import PreferencesPage
+from src.ui.meta_editor_page import MetaEditorPage
 from src.ui.audio_controls import AudioControls
 
 
@@ -57,6 +58,10 @@ def main() -> None:
     # Preferences page (route 3)
     prefs_page = PreferencesPage(window)
     window.content_stack.register_page(PageRoute.PREFERENCES, prefs_page)
+
+    # Meta editor page (route 4) — edit audio file metadata (ID3 tags)
+    meta_editor = MetaEditorPage(window)
+    window.content_stack.register_page(PageRoute.META_EDITOR, meta_editor)
 
     # ── Create Audio Controls and wire into footer ──────
     audio_controls = AudioControls(window)

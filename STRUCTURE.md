@@ -24,6 +24,7 @@ main.py                         # 启动脚本：组装所有部件，启动事�
     │   ├── lrc_state.py         #   歌词运行时状态机（reducer + undo/redo）
     │   ├── audio_manager.py     #   QMediaPlayer 封装（属性访问器 + 信号）
     │   ├── config_manager.py    #   JSON 持久化 + 会话级内存数据
+    │   ├── crypto_utils.py      #   Windows DPAPI 加密（API Key 安全存储）
     │   └── keybinding.py        #   键盘映射：QKeyEvent → InputAction，支持用户自定义
     │
     └── ui/                      # 界面层 — PyQt6 Widgets
@@ -33,9 +34,8 @@ main.py                         # 启动脚本：组装所有部件，启动事�
         ├── footer_bar.py        #   底部栏（承载 AudioControls + 文件拖放）
         ├── home_page.py         #   主页：使用引导与帮助
         ├── editor_page.py       #   编辑器：元信息表单 + 纯文本编辑器（拖放歌词后跳转至此）
-        ├── synchronizer_page.py #   ⭐ 打轴页面：逐行打时间戳的核心交互
-        │                        #     内含 _LyricRow / _TranslationRow 两个私有组件
-        │                        #     支持双击编辑、Ctrl+点击追加、快捷键复制/拆分等
+        ├── synchronizer_page.py #   ⭐ 打轴页面：逐行打时间戳的核心交互（~1200 行）
+        │                        #     内部组件已拆分至 synchronizer/ 子包
         ├── preferences_page.py  #   设置页：主题/颜色/格式/行为偏好 + 快捷键自定义
         │                        #     所有设置栏目均可折叠（_CollapsibleGroup）
         ├── audio_controls.py    #   播放控制条（按钮/时间线/速率滑块/波形）
@@ -43,7 +43,14 @@ main.py                         # 启动脚本：组装所有部件，启动事�
         ├── toast_overlay.py     #   Toast 通知队列（自动 3 秒消失）
         ├── load_audio_dialog.py #   加载音频对话框（文件选择 / URL 输入）
         ├── aside_panel.py       #   侧边面板（同步模式切换 + 导出按钮）
-        └── cursor_label.py      #   实时时间戳光标（Nyquist–Shannon 采样更新）
+        ├── cursor_label.py      #   实时时间戳光标（Nyquist–Shannon 采样更新）
+        └── synchronizer/        #   打轴页面子组件与对话框
+            ├── __init__.py      #     包标记（无重导出）
+            ├── _helpers.py      #     _contrast_for_theme() 对比度计算
+            ├── _lyric_input.py  #     _LyricInput 自适应高度歌词输入框
+            ├── _lyric_row.py    #     _LyricRow 歌词行控件（时间戳+三模式）
+            ├── _translation_row.py #  _TranslationRow 翻译编辑行
+            └── _ai_assist.py    #     AI 辅助翻译对话框、提示词生成、模式匹配
 ```
 
 ---
@@ -156,20 +163,35 @@ MainWindow （QMainWindow）
 - `keybinding_to_string(binding)` — 格式化为可读字符串（`Ctrl+Shift+S`、`Space`、`↑` 等）
 - `KeyBindingManager` 支持用户覆盖层：`set_user_binding()` / `reset_user_binding()` / `reset_all()`
 
-### 6. `synchronizer_page.py` — 核心打轴页面
+### 6. `synchronizer_page.py` + `synchronizer/` — 核心打轴页面
 
-最复杂的 UI 组件（~1600 行），内含三个内部类：
+原近 3000 行的单文件已拆分为 1 主文件 + 5 子模块（子包 ``synchronizer/``）：
 
-- **`_LyricInput`**：自适应高度的多行歌词输入框，Enter 提交/Shift+Enter 换行/Ctrl+Z 本地撤销
-- **`_LyricRow`**：每行 = 时间戳按钮（105px） + 三态显示栈
+```
+synchronizer_page.py            (~1200 行)  SynchronizerPage 主类
+synchronizer/
+├── _helpers.py                 (~20 行)    _contrast_for_theme() 对比度计算
+├── _lyric_input.py             (~110 行)   _LyricInput 自适应高度歌词输入框
+├── _lyric_row.py               (~480 行)   _LyricRow 歌词行控件（时间戳+三模式）
+├── _translation_row.py         (~120 行)   _TranslationRow 翻译编辑行
+└── _ai_assist.py              (~1090 行)   AI 辅助翻译对话框、提示词生成、模式匹配
+```
+
+**子模块职责：**
+
+- **`_helpers.py`** — `_contrast_for_theme(theme_color)`：WCAG 亮度检查，返回黑/白对比文字色
+- **`_lyric_input.py`** — `_LyricInput(QPlainTextEdit)`：自适应高度多行输入框，Enter 提交 / Shift+Enter 换行 / Ctrl+Z 本地撤销。高度通过 `QTextDocument.adjustSize()` 动态计算，上限 8 行可视高度
+- **`_lyric_row.py`** — `_LyricRow(QFrame)`：每行 = 时间戳按钮（105px） + 三态显示栈
   - View 模式（QLabel）：只读显示
-  - Edit 模式（QLineEdit）：内联编辑文本
-  - Split 模式（QTextEdit）：`//` 标记拆分，黄色闪烁高亮
-  - **双击**文本区域 → 进入编辑模式
-  - **Ctrl+点击**文本区域 → 追加空行
-  - 右键菜单：编辑/拆分/追加
-  - 信号：`seek_requested`、`edit_requested`、`row_clicked`、`lyric_text_changed`、`lyric_split_done`、`append_requested` 等
-- **`_TranslationRow`**：翻译编辑行（左侧 105px 占位 + QLineEdit），仅在翻译模式下显示
+  - Edit 模式（QLineEdit）：内联编辑文本，Enter 确认、Esc 取消
+  - Split 模式（QTextEdit）：`//` 标记拆分，黄色闪烁高亮，Ctrl+Enter 光标位置拆分
+  - 双击文本 → 编辑模式；Ctrl+点击文本 → 追加空行；右键菜单：编辑/拆分/追加
+  - 12 个信号：`seek_requested`、`edit_requested`、`row_clicked`、`lyric_text_changed`、`lyric_split_done`、`append_requested`、`edit_lyric_requested`、`split_lyric_requested` 等
+- **`_translation_row.py`** — `_TranslationRow(QFrame)`：翻译编辑行（左侧 105px 占位 + QLineEdit），仅在翻译模式下显示。信号：`translation_changed`（每按键）、`translation_finished`（Enter/失焦→推 undo）、`row_clicked`
+- **`_ai_assist.py`** — AI 辅助翻译全流程，所有函数接受 ``sync_page`` 参数解耦：
+  - `build_prompt_text(sync_page)` → `(prompt, line_count) | None`
+  - `show_ai_assist_dialog(sync_page, target_text_edit=None)` — 三页弹窗（选项/聊天网站/API 自动）
+  - `perform_pattern_matching(sync_page, input_text)` — 后台线程匹配 + 主线程逐行动画填充
 
 SynchronizerPage 的键盘处理：
 - 优先匹配打轴 + 编辑专用动作（SYNC、COPY_LINE、SPLIT_LYRIC 等）

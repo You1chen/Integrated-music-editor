@@ -114,3 +114,4 @@ class PageRoute:
     EDITOR = 1
     SYNCHRONIZER = 2
     PREFERENCES = 3
+    META_EDITOR = 4
