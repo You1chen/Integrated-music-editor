@@ -940,13 +940,16 @@ def _generate_and_copy_prompt(
 
 # ── Pattern Matching ───────────────────────────────────────────────
 
-def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str) -> None:
+def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
+                             overwrite: bool = False) -> None:
     """Match translations in a background thread, then fill them one by one.
 
     - Background thread: pure regex matching (never touches Qt / UI)
     - Main thread QTimer poll: check if matching is done
     - Main thread QTimer fill: apply one translation at a time,
       updating the visible _TranslationRow directly → line-by-line effect
+
+    When *overwrite* is True, existing translations are also replaced.
     """
     state = sync_page._mw.lrc_state
     prefs = sync_page._mw.config.get_preferences()
@@ -1016,7 +1019,7 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str) -> 
                 ts_groups[m.group(1)].append(m.group(2))
 
         for i, (time_val, lyric_text, translation) in enumerate(lyric_snapshot):
-            if translation:
+            if translation and not overwrite:
                 continue
             if time_val is None:
                 continue

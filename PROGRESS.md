@@ -809,8 +809,47 @@ client.chat.completions.create(model=..., messages=[...])
 
 | 文件 | 主要变更 |
 |------|---------|
-| `src/ui/synchronizer/_ai_assist.py` | urllib → openai 库；threading.Thread → _ApiWorker(QThread)；超时参数；翻译文件名修复；txt_path 传参修复 |
+| `src/ui/synchronizer/_ai_assist.py` | urllib → openai 库；threading.Thread → _ApiWorker(QThread)；超时参数；翻译文件名修复；txt_path 传参修复；提示词格式强化；翻译文件自动清理；覆写模式 |
+| `src/ui/synchronizer_page.py` | 模式匹配对话框新增「覆写已有翻译」勾选框 |
 | `test_api_connectivity.py` | threading.Thread → _TestWorker(QThread) |
 
-**相关提交**：`a676fb2`, `96bc806`
+### 后续修补（同日）
+
+#### 翻译文件名对不上歌曲
+
+**现象**：翻译保存为 `Yellow Star Beats_translation.txt`，但当前歌曲是「垂直落下」。
+
+**根因**：`_save_translation_txt` 中 `get_audio_src()` 返回的是 `file:///D:/...` 格式的 QUrl 字符串，`os.path.isfile()` 不认识，于是回退到了过时的 LRC 路径。
+
+**修复**：改用 `get_last_mp3_path()`（纯文件路径），并保留 `file://` URL 解析作为兜底。
+
+#### 翻译输出变成 JSON 格式
+
+**现象**：API 返回的翻译变成了 JSON 数组 `[{"time": "...", "translation": "..."}]`，无法直接用于模式匹配。
+
+**根因**：提示词只说了"翻译给出和原文相同的时间戳"，对输出格式约束太模糊。DeepSeek 模型在某些情况下会自主选择 JSON 输出。
+
+**修复**：强化 `build_prompt_text` 的提示词，明确要求 `[时间戳]翻译内容` 格式，禁止 JSON 输出，附带示例。
+
+#### 「填入模式匹配」按钮报错 `NameError: txt_path`
+
+**现象**：翻译结果对话框内点击「填入模式匹配」时报 `NameError: name 'txt_path' is not defined`。
+
+**根因**：`_fill_pattern_match` 函数引用了 `txt_path`，但这个变量是兄弟函数 `_show_done` 的参数，不在 `_fill_pattern_match` 的闭包作用域内。
+
+**修复**：通过 `_show_done` → `_show_result` → `_fill_pattern_match` 逐层传参。初次修复引入了新 bug——`QPushButton.clicked` 信号传 `bool` 参数覆盖了 lambda 的 `tp=txt_path` 默认值，最终改为无参闭包 `lambda: _fill_pattern_match(..., txt_path)` 解决。
+
+#### 翻译文件不自动删除
+
+**现象**：程序退出后 `*_translation.txt` 残留在音频文件目录。
+
+**修复**：`_save_translation_txt` 中调用 `mw.config._register_draft(out_path)` 将翻译文件注册到 session draft registry。程序退出时 `cleanup_session_drafts()` 自动清理；崩溃恢复时也会在下一次启动清理。
+
+#### 模式匹配新增覆写模式
+
+**现象**：模式匹配默认跳过已有翻译的行，用户想重新匹配时只能手动清空翻译再匹配。
+
+**新增**：模式匹配对话框增加「覆写已有翻译」勾选框，勾选后匹配到的结果会覆盖已有翻译（无匹配的行保留原翻译）。
+
+**相关提交**：`a676fb2`, `96bc806`, `95235df`, `1dbc268`
 

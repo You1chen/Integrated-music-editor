@@ -267,6 +267,11 @@ class SynchronizerPage(QWidget):
             text_edit.setPlainText(initial_text)
         dlg_layout.addWidget(text_edit, stretch=1)
 
+        # Overwrite mode checkbox
+        cb_overwrite = QCheckBox("覆写已有翻译（默认跳过已翻译的行）")
+        cb_overwrite.setStyleSheet("font-size: 12px; color: #aaa;")
+        dlg_layout.addWidget(cb_overwrite)
+
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
@@ -299,7 +304,12 @@ class SynchronizerPage(QWidget):
                 self._mw.toast_overlay.show_toast("warning", "未输入任何文本")
                 return
             # Defer so the modal dialog fully unwinds before we start
-            QTimer.singleShot(0, lambda: perform_pattern_matching(self, input_text))
+            QTimer.singleShot(
+                0,
+                lambda: perform_pattern_matching(
+                    self, input_text, overwrite=cb_overwrite.isChecked()
+                ),
+            )
 
     # ── Import / Export ─────────────────────────────────────
 
