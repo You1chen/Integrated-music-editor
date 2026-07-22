@@ -116,8 +116,11 @@ def build_prompt_text(sync_page: "SynchronizerPage") -> tuple[str, int] | None:
     lyrics_text = "\n".join(lines)
     prompt = (
         f"{lyrics_text}\n\n"
-        "请帮我翻译歌词，翻译给出和原文相同的时间戳，"
-        "无时间戳的不必翻译，不必给出歌曲原文，要求翻译符合全文逻辑"
+        "请将以上歌词翻译成中文。严格按照以下格式输出，每行一条，不要输出JSON：\n"
+        "[时间戳]翻译内容\n"
+        "例如：\n"
+        "[00:12.34]翻译后的歌词\n"
+        "注意：只输出翻译，不要附带原文；无时间戳的行不翻译；确保翻译符合上下文逻辑。"
     )
     return prompt, len(lines)
 
@@ -392,20 +395,29 @@ def show_ai_assist_dialog(
             _show_done(out_path, content)
 
         def _save_translation_txt(text: str) -> "tuple[bool, str]":
-            # Prefer audio file name (matches the actual song), fall back to LRC
-            audio_src = mw.config.get_audio_src()
-            if audio_src and os.path.isfile(audio_src):
-                stem = os.path.splitext(os.path.basename(audio_src))[0]
-                out_dir = os.path.dirname(audio_src)
+            # Use MP3 path (plain file path, always current song)
+            mp3_path = mw.config.get_last_mp3_path()
+            if mp3_path:
+                stem = os.path.splitext(os.path.basename(mp3_path))[0]
+                out_dir = os.path.dirname(mp3_path)
             else:
-                lrc_path = mw.config.get_last_lrc_path()
-                if lrc_path:
-                    stem = os.path.splitext(os.path.basename(lrc_path))[0]
-                    out_dir = os.path.dirname(lrc_path)
+                # Fallback: parse file:// URL from audio session
+                audio_src = mw.config.get_audio_src()
+                if audio_src.startswith("file:///"):
+                    fp = audio_src[8:]
+                elif audio_src.startswith("file://"):
+                    fp = audio_src[7:]
+                else:
+                    fp = audio_src
+                if fp and os.path.isfile(fp):
+                    stem = os.path.splitext(os.path.basename(fp))[0]
+                    out_dir = os.path.dirname(fp)
                 else:
                     stem = "translation"
                     out_dir = os.path.expanduser("~")
             out_path = os.path.join(out_dir, f"{stem}_translation.txt")
+            # Register for cleanup on exit (normal or crash recovery)
+            mw.config._register_draft(out_path)
             try:
                 with open(out_path, "w", encoding="utf-8") as f:
                     f.write(text)
