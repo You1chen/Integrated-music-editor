@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
         # ── Conect Signals ──────────────────────────────────
         self._connect_signals()
 
-        # ── Load saved draft ────────────────────────────────
+        # ── Load saved draft (consume it — read then delete) ──
         self._restoring_draft = True
         if self.config.get_remember_draft():
             saved_lyric = self.config.get_lyric()
@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
                     options=self._trim_options,
                     select=self.config.get_select_index(),
                 )
+            self.config.delete_draft()  # consumed — won't exist again until exit
 
         # Restore audio source: last path takes priority (if remember enabled)
         if self.config.get_remember_last_mp3():
@@ -242,43 +243,23 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """Handle draft lifecycle on window close.
 
-        - If ``overwriteSourceOnExit`` is enabled: overwrite the source
-          LRC file with the current draft content.
-        - Always persist **one** draft to the hidden AppData directory
-          so the next session can resume where it left off.
-        - Clean up visible draft files next to source files so the user's
-          music folder stays tidy.
+        - If ``overwriteSourceOnExit``: overwrite the source LRC file.
+        - If ``rememberDraft``: write one draft to AppData/draft.lrc.
+        The draft is read back on next launch and immediately deleted.
         """
         if len(self.lrc_state.lyric) > 0:
-            # Stop audio timer to prevent it from re-creating drafts
             self.audio_manager._timer.stop()
-            # Block _save_state
             self._closing = True
 
             if self.config.get_overwrite_source_on_exit():
-                # Overwrite the source LRC file (single implementation)
                 text = self.lrc_state.stringify(self._format_options)
-                self.config.overwrite_lrc(text)  # ignore errors on exit
+                self.config.overwrite_lrc(text)
 
-            # ── Always persist one draft to AppData ──────────
             if self.config.get_remember_draft():
                 text = self.lrc_state.stringify(self._format_options)
-                self.config.save_draft_to_appdata(text)
+                self.config.set_lyric(text)
 
-            # Clean up visible drafts next to source files
-            self.config.delete_visible_drafts()
-
-            # Clear UI state
             self.lrc_state.init_from_text("", self._trim_options)
-        else:
-            # No lyrics — still clean up leftover visible drafts
-            self.config.delete_visible_drafts()
-
-        # Remove the session draft registry so it doesn't accumulate
-        try:
-            os.remove(self.config._session_registry_path)
-        except FileNotFoundError:
-            pass
 
         self._closing = True
         super().closeEvent(event)
@@ -388,8 +369,8 @@ class MainWindow(QMainWindow):
         self.audio_manager.error_occurred.connect(self._on_audio_error)
         self.audio_manager.duration_changed.connect(self._on_duration_loaded)
 
-        # LRC state changes -> save
-        self.lrc_state.state_changed.connect(self._save_state)
+        # LRC state changes -> select-index persistence only
+        self.lrc_state.state_changed.connect(self._save_select_index)
 
         # Content stack notifies when synchronizer page is shown/hidden
         self.content_stack.sync_page_active_changed.connect(self._on_sync_page_changed)
@@ -463,14 +444,11 @@ class MainWindow(QMainWindow):
             except TypeError:
                 pass  # Not connected
 
-    def _save_state(self) -> None:
-        """Persist state to config when it changes."""
+    def _save_select_index(self) -> None:
+        """Persist the current select_index (lightweight, no draft)."""
         if self._closing or self._restoring_draft:
             return
-        if self.config.get_remember_draft():
-            text = self.lrc_state.stringify(self._format_options)
-            self.config.set_lyric(text)
-            self.config.set_select_index(self.lrc_state.select_index)
+        self.config.set_select_index(self.lrc_state.select_index)
 
     # ── Public Helpers ──────────────────────────────────────
 

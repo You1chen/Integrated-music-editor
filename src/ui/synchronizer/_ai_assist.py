@@ -7,7 +7,6 @@ coupling to the page class itself.
 
 from __future__ import annotations
 
-import os
 import re
 import threading
 from collections import defaultdict
@@ -120,7 +119,7 @@ def build_prompt_text(sync_page: "SynchronizerPage") -> tuple[str, int] | None:
         "[时间戳]翻译内容\n"
         "例如：\n"
         "[00:12.34]翻译后的歌词\n"
-        "注意：只输出翻译，不要附带原文；无时间戳的行不翻译；确保翻译符合上下文逻辑。"
+        "注意：只输出翻译，不要附带原文；作者歌手这些也要翻译，无时间戳的行不翻译；确保翻译符合上下文逻辑。"
     )
     return prompt, len(lines)
 
@@ -382,56 +381,13 @@ def show_ai_assist_dialog(
                 )
                 return
 
-            # ── Save to txt next to the LRC source file ──
-            saved, out_path = _save_translation_txt(content)
-            if not saved:
-                QMessageBox.critical(
-                    dialog, "文件写入失败",
-                    f"无法写入翻译文件：\n{out_path}"
-                )
-                return
-
             # ── "翻译成功" confirm dialog ──
-            _show_done(out_path, content)
+            _show_done(content)
 
-        def _save_translation_txt(text: str) -> "tuple[bool, str]":
-            # Use MP3 path (plain file path, always current song)
-            mp3_path = mw.config.get_last_mp3_path()
-            if mp3_path:
-                stem = os.path.splitext(os.path.basename(mp3_path))[0]
-                out_dir = os.path.dirname(mp3_path)
-            else:
-                # Fallback: parse file:// URL from audio session
-                audio_src = mw.config.get_audio_src()
-                if audio_src.startswith("file:///"):
-                    fp = audio_src[8:]
-                elif audio_src.startswith("file://"):
-                    fp = audio_src[7:]
-                else:
-                    fp = audio_src
-                if fp and os.path.isfile(fp):
-                    stem = os.path.splitext(os.path.basename(fp))[0]
-                    out_dir = os.path.dirname(fp)
-                else:
-                    stem = "translation"
-                    out_dir = os.path.expanduser("~")
-            out_path = os.path.join(out_dir, f"{stem}_translation.txt")
-            # Register for cleanup on exit (normal or crash recovery)
-            mw.config._register_draft(out_path)
-            try:
-                with open(out_path, "w", encoding="utf-8") as f:
-                    f.write(text)
-                if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                    return True, out_path
-                else:
-                    return False, out_path
-            except OSError:
-                return False, out_path
-
-        def _show_done(txt_path: str, response_text: str) -> None:
+        def _show_done(response_text: str) -> None:
             done = QDialog(dialog)
             done.setWindowTitle("翻译成功")
-            done.setFixedSize(420, 140)
+            done.setFixedSize(360, 100)
             done.setWindowFlags(
                 Qt.WindowType.Dialog
                 | Qt.WindowType.CustomizeWindowHint
@@ -441,7 +397,7 @@ def show_ai_assist_dialog(
             d_layout.setContentsMargins(20, 16, 20, 16)
             d_layout.setSpacing(12)
 
-            msg = QLabel(f"翻译完成，已保存至：\n{txt_path}")
+            msg = QLabel("翻译完成。")
             msg.setWordWrap(True)
             msg.setStyleSheet("font-size: 13px;")
             d_layout.addWidget(msg)
@@ -466,7 +422,7 @@ def show_ai_assist_dialog(
                     done.accept(),
                     QTimer.singleShot(
                         50,
-                        lambda: _show_result(response_text or "", txt_path),
+                        lambda: _show_result(response_text or ""),
                     ),
                 )
             )
@@ -479,7 +435,7 @@ def show_ai_assist_dialog(
             d_layout.addLayout(d_btns)
             done.exec()
 
-        def _show_result(text: str, txt_path: str = "") -> None:
+        def _show_result(text: str) -> None:
             rd = QDialog()
             rd.setWindowTitle("翻译结果 — " + cfg.get("name", "API"))
             rd.resize(700, 500)
@@ -521,7 +477,7 @@ def show_ai_assist_dialog(
                 "}"
             )
             btn_fill.clicked.connect(
-                lambda: _fill_pattern_match(rd, rd_edit.toPlainText(), txt_path)
+                lambda: _fill_pattern_match(rd, rd_edit.toPlainText())
             )
             rd_btns.addWidget(btn_fill)
 
@@ -534,15 +490,8 @@ def show_ai_assist_dialog(
             rd.exec()
 
         def _fill_pattern_match(
-            result_dialog: QDialog, text: str, txt_path: str = ""
+            result_dialog: QDialog, text: str,
         ) -> None:
-            # Save any user edits back to the txt file
-            try:
-                with open(txt_path, "w", encoding="utf-8") as f:
-                    f.write(text)
-            except OSError:
-                pass
-
             result_dialog.accept()  # close result dialog
             dialog.accept()         # close AI assist dialog
 

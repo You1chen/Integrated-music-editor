@@ -298,18 +298,19 @@ class LyricAxisWidget(QScrollArea):
             self._empty_label.hide()
             self._mode_btn.show()
 
-            if not self._user_set_mode:
-                has_trans = any(
-                    item._translation for item in self._items
-                )
-                if has_trans and self._mode == "original":
-                    self._mode = "bilingual"
-                    self._mode_btn.setText(self.MODE_LABELS[self._mode])
-                elif not has_trans and self._mode != "original":
-                    self._mode = "original"
-                    self._mode_btn.setText(self.MODE_LABELS[self._mode])
-                for item in self._items:
-                    item.set_mode(self._mode)
+            has_trans = any(
+                item._translation for item in self._items
+            )
+            if not has_trans:
+                # No translations — always stay on original
+                self._mode = "original"
+                self._mode_btn.setText(self.MODE_LABELS[self._mode])
+            elif not self._user_set_mode and self._mode == "original":
+                # Translations exist and user hasn't toggled — auto bilingual
+                self._mode = "bilingual"
+                self._mode_btn.setText(self.MODE_LABELS[self._mode])
+            for item in self._items:
+                item.set_mode(self._mode)
 
             self._update_spacers()
             # Let the layout settle before the first scroll
@@ -325,6 +326,16 @@ class LyricAxisWidget(QScrollArea):
     # ── Display mode ───────────────────────────────────────────
 
     def _cycle_mode(self) -> None:
+        """Cycle: original → translation → bilingual → original.
+
+        When no lyric has a translation the toggle is a no-op
+        (switching to a translation view with nothing to show is
+        confusing to the user).
+        """
+        has_trans = any(item._translation for item in self._items)
+        if not has_trans:
+            return  # nothing to translate — stay on original
+
         self._user_set_mode = True
         self._programmatic = True
         try:

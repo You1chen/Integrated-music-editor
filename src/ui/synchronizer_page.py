@@ -330,9 +330,7 @@ class SynchronizerPage(QWidget):
 
         try:
             if len(state.lyric) > 0:
-                # Clear UI first, then delete draft file
                 state.init_from_text("", self._mw.trim_options)
-                self._mw.config.delete_draft()
 
             # Smart import (when audio is loaded)
             audio = self._mw.audio_manager
@@ -554,7 +552,6 @@ class SynchronizerPage(QWidget):
         text = self._mw.lrc_state.stringify(self._mw.format_options)
         ok, msg = self._mw.config.overwrite_lrc(text)
         if ok:
-            self._mw.config.delete_draft()
             self._mw.toast_overlay.show_toast("success", msg)
         else:
             QMessageBox.warning(self, "错误", msg)
