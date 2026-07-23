@@ -230,6 +230,15 @@ class PreferencesPage(QScrollArea):
             "记住草稿（自动保存/加载打轴进度）:", self._remember_draft_cb
         )
 
+        self._overwrite_source_cb = QCheckBox()
+        self._overwrite_source_cb.setChecked(
+            self._mw.config.get_overwrite_source_on_exit()
+        )
+        self._overwrite_source_cb.toggled.connect(self._on_toggle_changed)
+        file_memory_layout.addRow(
+            "退出时草稿覆写源歌词文件:", self._overwrite_source_cb
+        )
+
         self._remember_lrc_cb = QCheckBox()
         self._remember_lrc_cb.setChecked(self._mw.config.get_remember_last_lrc())
         self._remember_lrc_cb.toggled.connect(self._on_toggle_changed)
@@ -331,6 +340,18 @@ class PreferencesPage(QScrollArea):
         self._auto_seek_delay.setSuffix(" 秒")
         self._auto_seek_delay.valueChanged.connect(self._on_toggle_changed)
         sync_layout.addRow("跳转延迟:", self._auto_seek_delay)
+
+        self._undo_seek_back = QDoubleSpinBox()
+        self._undo_seek_back.setRange(0.0, 10.0)
+        self._undo_seek_back.setSingleStep(0.5)
+        self._undo_seek_back.setDecimals(1)
+        self._undo_seek_back.setValue(prefs.get("undoSeekBackSeconds", 3.0))
+        self._undo_seek_back.setSuffix(" 秒")
+        self._undo_seek_back.setToolTip(
+            "Ctrl+Z 撤销打轴后，音频进度条自动倒回的秒数（设为 0 则禁用）"
+        )
+        self._undo_seek_back.valueChanged.connect(self._on_toggle_changed)
+        sync_layout.addRow("撤销打轴后倒回:", self._undo_seek_back)
 
         sync.set_content_layout(sync_layout)
         layout.addWidget(sync)
@@ -588,6 +609,7 @@ class PreferencesPage(QScrollArea):
         prefs["lang"] = "zh-CN"
         prefs["themeMode"] = self._theme_combo.currentData()
         prefs["rememberDraft"] = self._remember_draft_cb.isChecked()
+        prefs["overwriteSourceOnExit"] = self._overwrite_source_cb.isChecked()
         prefs["rememberLastLrc"] = self._remember_lrc_cb.isChecked()
         prefs["rememberLastMp3"] = self._remember_mp3_cb.isChecked()
         prefs["defaultBrowseDir"] = self._browse_dir_input.text()
@@ -600,6 +622,7 @@ class PreferencesPage(QScrollArea):
         prefs["reactionTimeMs"] = self._reaction_time.value()
         prefs["autoSeekVerify"] = self._auto_seek_cb.isChecked()
         prefs["autoSeekDelay"] = self._auto_seek_delay.value()
+        prefs["undoSeekBackSeconds"] = self._undo_seek_back.value()
         self._mw.update_preferences(prefs)
 
     def _on_file_memory_changed(self) -> None:

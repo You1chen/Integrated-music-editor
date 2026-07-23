@@ -9,6 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
+# PyInstaller artefacts
+*.spec.bak
+lrc-maker.exe
+
 # Project docs / personal notes
 教材.md
 launcher.c

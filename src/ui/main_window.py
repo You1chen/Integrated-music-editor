@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
@@ -47,6 +49,8 @@ class MainWindow(QMainWindow):
 
         # Guard against _save_state re-creating draft during close
         self._closing = False
+        # Guard against _save_state during initial draft/file restoration
+        self._restoring_draft = False
 
         # Load saved preferences
         prefs = self.config.get_preferences()
@@ -94,6 +98,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
         # ── Load saved draft ────────────────────────────────
+        self._restoring_draft = True
         if self.config.get_remember_draft():
             saved_lyric = self.config.get_lyric()
             if saved_lyric:
@@ -107,7 +112,6 @@ class MainWindow(QMainWindow):
         if self.config.get_remember_last_mp3():
             last_mp3 = self.config.get_last_mp3_path()
             if last_mp3:
-                import os
                 if os.path.exists(last_mp3):
                     url = QUrl.fromLocalFile(last_mp3).toString()
                     self.config.set_audio_src(url)
@@ -121,7 +125,6 @@ class MainWindow(QMainWindow):
         if self.config.get_remember_last_lrc():
             last_lrc = self.config.get_last_lrc_path()
             if last_lrc:
-                import os
                 if os.path.exists(last_lrc):
                     try:
                         with open(last_lrc, "r", encoding="utf-8") as f:
@@ -133,6 +136,8 @@ class MainWindow(QMainWindow):
                         )
                     except Exception:
                         pass  # Silently fail if file can't be loaded
+
+        self._restoring_draft = False
 
         # Show home page by default
         self.content_stack.set_page(PageRoute.HOME)
@@ -179,47 +184,102 @@ class MainWindow(QMainWindow):
 
         # ── Intercept when a lyric is selected on the sync page ──
         sync_page = self.content_stack._pages.get(PageRoute.SYNCHRONIZER)
+        has_selection = (
+            self.lrc_state.select_index != -1
+            or bool(
+                sync_page is not None
+                and getattr(sync_page, "_multi_selected", set())
+            )
+        )
         if (
             sync_page is not None
             and self.content_stack.currentIndex() == PageRoute.SYNCHRONIZER
-            and self.lrc_state.select_index != -1
+            and has_selection
         ):
+            shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             action = self.keybinding_manager.get_matched_action(event)
 
-            # Audio shortcuts must NOT fire when a lyric is selected
-            if action in (
-                InputAction.SEEK_BACKWARD,
-                InputAction.SEEK_FORWARD,
-                InputAction.RESET_RATE,
-                InputAction.TOGGLE_PLAY,
-                InputAction.INCREASE_RATE,
-                InputAction.DECREASE_RATE,
-            ):
-                return True  # Swallow the event
+            # ── Shift held → playback mode (even when lyrics selected) ──
+            if shift:
+                if action == InputAction.SYNC:
+                    self.audio_manager.toggle()
+                    return True
+                # Other audio shortcuts (seek, rate, …) fall
+                # through to handle_global_key below
+            else:
+                # ── No Shift → synchronizer mode ──────────────
+                # Left / Right arrows → jump to prev / next timestamp
+                if action == InputAction.SEEK_BACKWARD and event.key() == Qt.Key.Key_Left:
+                    sync_page._on_jump_prev_timestamp()
+                    return True
+                if action == InputAction.SEEK_FORWARD and event.key() == Qt.Key.Key_Right:
+                    sync_page._on_jump_next_timestamp()
+                    return True
 
-            # Space → always timestamp, regardless of which widget has focus
-            if action == InputAction.SYNC:
-                sync_page._on_sync()
-                return True
+                # Block audio shortcuts
+                if action in (
+                    InputAction.SEEK_BACKWARD,
+                    InputAction.SEEK_FORWARD,
+                    InputAction.RESET_RATE,
+                    InputAction.TOGGLE_PLAY,
+                    InputAction.INCREASE_RATE,
+                    InputAction.DECREASE_RATE,
+                ):
+                    return True
+
+                # Space → timestamp
+                if action == InputAction.SYNC:
+                    sync_page._on_sync()
+                    return True
 
         # Fall through to normal global-key handling
         if self.handle_global_key(event):
             return True
         return super().eventFilter(obj, event)
 
-    # ── Close Event (draft warning) ─────────────────────────
+    # ── Close Event (draft handling) ────────────────────────
 
     def closeEvent(self, event) -> None:
-        """Intercept window close to clean up all session drafts."""
+        """Handle draft lifecycle on window close.
+
+        - If ``overwriteSourceOnExit`` is enabled: overwrite the source
+          LRC file with the current draft content.
+        - Always persist **one** draft to the hidden AppData directory
+          so the next session can resume where it left off.
+        - Clean up visible draft files next to source files so the user's
+          music folder stays tidy.
+        """
         if len(self.lrc_state.lyric) > 0:
             # Stop audio timer to prevent it from re-creating drafts
             self.audio_manager._timer.stop()
-            # Block _save_state, then clear UI
+            # Block _save_state
             self._closing = True
-            self.lrc_state.init_from_text("", self._trim_options)
 
-        # Delete every draft this session ever touched
-        self.config.cleanup_session_drafts()
+            if self.config.get_overwrite_source_on_exit():
+                # Overwrite the source LRC file (single implementation)
+                text = self.lrc_state.stringify(self._format_options)
+                self.config.overwrite_lrc(text)  # ignore errors on exit
+
+            # ── Always persist one draft to AppData ──────────
+            if self.config.get_remember_draft():
+                text = self.lrc_state.stringify(self._format_options)
+                self.config.save_draft_to_appdata(text)
+
+            # Clean up visible drafts next to source files
+            self.config.delete_visible_drafts()
+
+            # Clear UI state
+            self.lrc_state.init_from_text("", self._trim_options)
+        else:
+            # No lyrics — still clean up leftover visible drafts
+            self.config.delete_visible_drafts()
+
+        # Remove the session draft registry so it doesn't accumulate
+        try:
+            os.remove(self.config._session_registry_path)
+        except FileNotFoundError:
+            pass
+
         self._closing = True
         super().closeEvent(event)
 
@@ -286,7 +346,29 @@ class MainWindow(QMainWindow):
             self._show_help_dialog()
             return True
         elif action == InputAction.UNDO:
+            # Snapshot timestamps so we can detect a sync / set_time undo
+            pre_count = len(self.lrc_state.lyric)
+            pre_times = [line.time for line in self.lrc_state.lyric]
+
             self.lrc_state.undo()
+
+            # When the line count is unchanged and a timestamp was
+            # removed or changed, seek the audio back so the user can
+            # re-listen and re-stamp straight away.
+            if len(self.lrc_state.lyric) == pre_count:
+                seek_secs = float(
+                    self.config.get_preferences().get("undoSeekBackSeconds", 3.0)
+                )
+                if seek_secs > 0:
+                    for i in range(pre_count):
+                        old_t = pre_times[i]
+                        new_t = self.lrc_state.lyric[i].time
+                        if old_t is not None and old_t != new_t:
+                            seek_target = max(0.0, old_t - seek_secs)
+                            if self.audio_manager.duration > 0:
+                                self.audio_manager.current_time = seek_target
+                            break
+
             return True
         elif action == InputAction.REDO:
             self.lrc_state.redo()
@@ -299,6 +381,7 @@ class MainWindow(QMainWindow):
     def _connect_signals(self) -> None:
         # Header navigation
         self.header_bar.page_requested.connect(self.content_stack.set_page)
+        self.header_bar.help_requested.connect(self._show_help_dialog)
 
         # Audio manager -> footer + lrc_state + toast
         self.audio_manager.state_changed.connect(self._on_audio_state_changed)
@@ -335,7 +418,6 @@ class MainWindow(QMainWindow):
         """If a .lrc or .txt file with the same stem as the audio exists
         in the same directory, load it automatically.
         """
-        import os
         src = self.audio_manager.src
         if not src:
             return
@@ -383,7 +465,7 @@ class MainWindow(QMainWindow):
 
     def _save_state(self) -> None:
         """Persist state to config when it changes."""
-        if self._closing:
+        if self._closing or self._restoring_draft:
             return
         if self.config.get_remember_draft():
             text = self.lrc_state.stringify(self._format_options)
@@ -409,11 +491,11 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("欢迎使用集成歌曲编辑器")
-        dlg.setMinimumSize(440, 380)
+        dlg.setMinimumSize(460, 420)
 
         lay = QVBL(dlg)
         lay.setContentsMargins(28, 24, 28, 16)
-        lay.setSpacing(14)
+        lay.setSpacing(12)
 
         # ── Title ──
         title = QLabel("集成歌曲编辑器")
@@ -421,11 +503,20 @@ class MainWindow(QMainWindow):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(title)
 
+        # ── Subtitle ──
+        sub = QLabel("LRC 歌词制作 · 打轴 · 翻译 · 元数据编辑")
+        sub.setStyleSheet("font-size: 13px; color: gray;")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(sub)
+
+        lay.addSpacing(4)
+
         # ── Steps ──
         for text in [
-            "1. 切换到「歌词制作」页面，导入或粘贴歌词文本。",
-            "2. 点击左下方按钮载入音频文件，或直接拖入。",
-            "3. 播放音频、按空格键，就能逐行打时间轴啦～",
+            "1. 点击左下角加载音频，或将文件拖入窗口",
+            "2. 在「歌词制作」页面导入歌词文本",
+            "3. 播放音频，按空格键逐行打时间戳 🎵",
+            "4. 用编辑功能精细调整：拆分、合并、删除、翻译",
         ]:
             lbl = QLabel(text)
             lbl.setWordWrap(True)
@@ -466,7 +557,7 @@ class MainWindow(QMainWindow):
             self.config.set_preferences(prefs)
 
     def _show_help_dialog(self) -> None:
-        """Show the help / about dialog with feature overview and tips."""
+        """Show the help dialog with feature overview, workflow, and shortcuts."""
         from PyQt6.QtWidgets import (
             QDialog,
             QDialogButtonBox,
@@ -485,8 +576,8 @@ class MainWindow(QMainWindow):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("帮助")
-        dialog.resize(680, 520)
-        dialog.setMinimumSize(560, 400)
+        dialog.resize(720, 560)
+        dialog.setMinimumSize(600, 420)
 
         layout = QVBL(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -508,13 +599,27 @@ class MainWindow(QMainWindow):
             tabs.addTab(scroll, title)
             return scroll, lay
 
-        # ── Tab 1: 关于 ──
+        def _section(lay: QVBL, title: str, desc: str) -> None:
+            """Add a titled section to a layout."""
+            tl = QLabel(title)
+            tl.setStyleSheet("font-size: 15px; font-weight: bold;")
+            lay.addWidget(tl)
+            dl = QLabel(desc)
+            dl.setStyleSheet("font-size: 13px;")
+            dl.setWordWrap(True)
+            lay.addWidget(dl)
+
+        # ══════════════════════════════════════════════════════════
+        # Tab 1: 关于
+        # ══════════════════════════════════════════════════════════
         _, lay_about = _make_tab("关于")
         for text, style in [
             ("集成歌曲编辑器", "font-size: 22px; font-weight: bold;"),
             (
-                "这是一款帮你为歌曲制作滚动歌词（LRC 歌词文件）的小工具。\n"
-                "边听歌边按空格键，就能轻松给每行歌词打上时间戳。",
+                "一款为歌曲制作滚动歌词（LRC 文件）的桌面工具。\n"
+                "边听歌边按空格键，逐行打上时间戳，轻松完成打轴。\n\n"
+                "支持多选编辑、批量删除、相邻行合并、AI 辅助翻译、\n"
+                "主题自定义、快捷键全自定义等功能。",
                 "font-size: 14px; line-height: 1.6;",
             ),
             (
@@ -522,12 +627,14 @@ class MainWindow(QMainWindow):
                 "• 给喜欢的歌曲制作精准的滚动歌词\n"
                 "• 为外语歌曲添加中文翻译\n"
                 "• 修正网上下载的歌词时间不准的问题\n"
-                "• 用 AI 帮忙翻译歌词\n"
-                "• 根据个人喜好调整主题颜色和显示风格",
+                "• 用 AI 帮忙翻译歌词（支持 OpenAI 兼容接口）\n"
+                "• 批量删除、合并歌词行，高效整理歌词\n"
+                "• 编辑音频元数据（ID3 / VorbisComment）和封面图\n"
+                "• 根据个人喜好调整主题颜色、亮暗模式和显示风格",
                 "font-size: 13px; line-height: 1.8;",
             ),
             (
-                "💡 提示：按 ? 键可以随时打开这个帮助窗口",
+                "💡 提示：按 ? 键或点击顶栏的 ? 按钮可随时打开此帮助",
                 "font-size: 12px; color: gray;",
             ),
         ]:
@@ -537,78 +644,86 @@ class MainWindow(QMainWindow):
             lay_about.addWidget(lbl)
         lay_about.addStretch()
 
-        # ── Tab 2: 使用流程 ──
+        # ══════════════════════════════════════════════════════════
+        # Tab 2: 使用流程
+        # ══════════════════════════════════════════════════════════
         _, lay_flow = _make_tab("使用流程")
         steps = [
             ("① 载入歌曲",
-             "点击左下角的加载按钮（或按 Ctrl+R），选择你的歌曲文件。\n"
-             "支持 MP3、FLAC、WAV 等常见格式。也可以直接把歌曲文件拖到窗口底部。"),
+             "点击左下角的加载按钮（或按 Ctrl+R），选择歌曲文件。\n"
+             "支持 MP3、FLAC、WAV 等常见格式，也可以直接把文件拖到窗口底部。\n"
+             "载入后主页会显示封面和滚动歌词轴，波形图会自动生成。"),
             ("② 导入歌词",
-             "点击工具栏的「导入」按钮，选择歌词文件。\n"
-             "如果歌曲旁边有同名的歌词文件，软件会自动帮你找到它。\n"
-             "歌词文件可以是 .lrc 或 .txt 格式，每行一句歌词即可。"),
+             "点击「歌词制作」页面的「导入」按钮，选择歌词文件。\n"
+             "如果歌曲旁边有同名 .lrc/.txt 文件，软件会自动加载。\n"
+             "也可以直接在歌词输入框中粘贴歌词，按 Enter 提交。"),
             ("③ 开始打轴",
-             "这是最关键的一步！在「歌词制作」页面：\n"
-             "• 点击播放按钮开始听歌\n"
-             "• 听到某句歌词开始唱的时候，按空格键——这行歌词就自动记录下当前时间\n"
-             "• 光标会自动跳到下一行，继续听、继续按空格\n"
-             "• 下方的波形图可以帮助你判断歌词出现的位置"),
-            ("④ 检查和微调",
-             "• 点击某行的时间数字可以跳到那个位置重新听\n"
-             "• 如果时间不太对，选中那一行按 Backspace 删掉时间，重新打一次\n"
-             "• 双击歌词文字可以修改歌词内容\n"
-             "• 右键点击歌词行还有更多操作（拆分长句、插入空行等）"),
+             "这是最核心的步骤：\n"
+             "• 播放音频，听到某句歌词开始时按 空格键 → 自动记录当前时间\n"
+             "• 光标自动跳到下一行，继续听、继续按空格\n"
+             "• 波形图可以帮你预判歌词出现的位置\n"
+             "• 可以调慢播放速度（右下角滑块），慢速精准打轴"),
+            ("④ 精细编辑",
+             "打轴完成后进入编辑阶段：\n"
+             "• 点击时间戳按钮 → 跳转到该位置复听\n"
+             "• Backspace → 删除当前行的时间戳（重新打）\n"
+             "• Delete → 彻底删除选中的歌词行\n"
+             "• 双击歌词文字 → 内联编辑文本\n"
+             "• 右键菜单 → 编辑 / 拆分 / 追加新行\n"
+             "• Ctrl+H → 合并相邻选中行为一行"),
             ("⑤ 保存导出",
-             "• 点击「保存」直接覆盖原来的歌词文件\n"
-             "• 点击「导出」另存为一个新文件\n"
-             "• 点击「预览」看看最终歌词文件长什么样"),
+             "• Ctrl+S 保存 → 直接覆盖源歌词文件\n"
+             "• Ctrl+Shift+S 导出 → 另存为新文件\n"
+             "• Ctrl+L 预览 → 查看最终 LRC 输出效果\n"
+             "• 退出时可选自动覆写源文件（在设置中配置）"),
         ]
         for title, desc in steps:
-            title_lbl = QLabel(title)
-            title_lbl.setStyleSheet("font-size: 15px; font-weight: bold;")
-            lay_flow.addWidget(title_lbl)
-            desc_lbl = QLabel(desc)
-            desc_lbl.setStyleSheet("font-size: 13px;")
-            desc_lbl.setWordWrap(True)
-            lay_flow.addWidget(desc_lbl)
+            _section(lay_flow, title, desc)
         lay_flow.addStretch()
 
-        # ── Tab 3: 实用技巧 ──
-        _, lay_tips = _make_tab("实用技巧")
-        tips = [
-            ("🎯 怎么打得准？",
-             "• 先粗打一遍，边听边按空格，不用纠结毫秒级精度\n"
-             "• 打完后再从头听一遍，发现不对的就选中按 Backspace 重打\n"
-             "• 善用波形图——歌词通常在有波峰的地方开始\n"
-             "• 可以调慢播放速度（右下角的滑块），在难打的部分放慢来听"),
-            ("⌨️ 键盘操作更高效",
-             "• 全程用键盘就能完成打轴，不需要频繁切换鼠标\n"
-             "• 空格打轴、↑↓ 选行、Backspace 删时间——这三个最常用\n"
-             "• 快捷键可以在「设置」页面里自定义成你习惯的按键"),
-            ("🌐 翻译歌词",
-             "• 点击「翻译模式」按钮，每行歌词下方会出现翻译输入框\n"
-             "• 如果你已有带翻译的歌词文件，用「模式匹配」可以自动匹配进去\n"
-             "• 「AI 辅助翻译」可以调用 AI 帮你批量翻译（需要配置 API Key）"),
-            ("🎨 个性化设置",
-             "• 在「设置」页面可以切换亮色/暗色主题\n"
-             "• 可以自定义主题色，选你喜欢的颜色\n"
-             "• 波形图、虚拟空格键等辅助功能都可以按需开关\n"
-             "• 歌词的时间精度（秒后几位）可以在设置中调整"),
-            ("💾 数据安全",
-             "• 你的歌词会随时自动保存为草稿，不小心关了软件也不会丢\n"
-             "• 每一步操作都可以撤销（Ctrl+Z）和重做（Ctrl+Y）"),
+        # ══════════════════════════════════════════════════════════
+        # Tab 3: 歌词编辑
+        # ══════════════════════════════════════════════════════════
+        _, lay_edit = _make_tab("歌词编辑")
+        edit_sections = [
+            ("🖱️ 多选操作",
+             "• Ctrl+左键 点击歌词行 → 加入或移出多选（虚线边框标记）\n"
+             "• Ctrl+A → 全选所有歌词行\n"
+             "• 单击任意行 → 取消多选，单选该行\n"
+             "• Esc → 取消所有选择\n"
+             "• 多选后可以批量删除或合并"),
+            ("🗑️ 删除歌词行",
+             "• Delete 键 → 删除所有选中的行（完全删除，含时间和翻译）\n"
+             "• Backspace 键 → 仅清除时间戳，保留歌词文本\n"
+             "• 支持单选和多选批量删除\n"
+             "• 所有删除操作均可 Ctrl+Z 撤销"),
+            ("🔗 合并歌词行",
+             "• Ctrl+H → 将选中的相邻行合并为一行\n"
+             "• 合并取最早的时间戳，拼接所有文本内容\n"
+             "• 仅相邻行可合并（不相邻会提示错误）\n"
+             "• 示例：选中第 1,2,3 行按 Ctrl+H → 合并为一行"),
+            ("✂️ 拆分歌词行",
+             "• Ctrl+D 或右键菜单「拆分」→ 进入拆分模式\n"
+             "• 在文本中插入 // 标记拆分位置，按 Enter 确认\n"
+             "• 或在光标位置按 Ctrl+Enter 直接拆分\n"
+             "• // 标记会被完全移除，不会出现在最终歌词中"),
+            ("📝 追加和复制",
+             "• Ctrl+右键 点击歌词行 → 在该行下方追加空行（继承时间戳）\n"
+             "• Ctrl+C → 复制当前行到下方（同样文本和时间戳）\n"
+             "• 歌词输入框支持多行粘贴，Enter 提交"),
+            ("🌐 翻译模式",
+             "• Ctrl+T → 切换翻译编辑模式\n"
+             "• 每行下方出现翻译输入框，可直接编辑\n"
+             "• 「模式匹配」→ 粘贴带翻译的 LRC，自动按时间戳匹配\n"
+             "• 「AI 辅助翻译」→ 调用 AI API 批量翻译（需配置模型）"),
         ]
-        for title, desc in tips:
-            title_lbl = QLabel(title)
-            title_lbl.setStyleSheet("font-size: 14px; font-weight: bold;")
-            lay_tips.addWidget(title_lbl)
-            desc_lbl = QLabel(desc)
-            desc_lbl.setStyleSheet("font-size: 13px;")
-            desc_lbl.setWordWrap(True)
-            lay_tips.addWidget(desc_lbl)
-        lay_tips.addStretch()
+        for title, desc in edit_sections:
+            _section(lay_edit, title, desc)
+        lay_edit.addStretch()
 
-        # ── Tab 4: 快捷键参考 ──
+        # ══════════════════════════════════════════════════════════
+        # Tab 4: 快捷键参考
+        # ══════════════════════════════════════════════════════════
         _, lay_keys = _make_tab("快捷键参考")
         note = QLabel("下面列出了所有默认快捷键，你可以在「设置」页面修改它们。")
         note.setStyleSheet("font-size: 12px; color: gray;")

@@ -1,12 +1,54 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "lrc-maker-python"
-version = "0.1.0"
-description = "Add your description here"
+name = "lrc-maker"
+version = "6.0.0"
+description = "Desktop LRC lyrics editor with audio-synced timestamping, AI-assisted translation, and audio metadata editing."
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-    "mutagen>=1.48.1",
-    "numpy>=2.5.1",
-    "openai>=2.46.0",
-    "pyqt6>=6.11.0",
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "You1chen", email = "you1chen@example.com" },
 ]
+keywords = ["lrc", "lyrics", "audio", "synchronizer", "pyqt6"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Editors",
+]
+dependencies = [
+    "PyQt6>=6.5.0",
+    "numpy>=1.24.0",
+    "mutagen>=1.48.0",
+    "openai>=2.0.0",
+]
+urls = { Repository = "https://github.com/You1chen/Integrated-music-editor" }
+
+[project.optional-dependencies]
+waveform = ["soundfile>=0.12.0"]
+build = ["pyinstaller>=6.0.0"]
+
+[project.scripts]
+lrc-maker = "main:main"
+
+[project.gui-scripts]
+lrc-maker-gui = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src", "src.*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.txt", "*.md"]

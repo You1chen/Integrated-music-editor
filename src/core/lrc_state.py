@@ -371,6 +371,62 @@ class LrcStateManager(QObject):
 
             self.state_changed.emit()
 
+    def delete_lines(self, indices: set[int]) -> None:
+        """Completely remove one or more lines (text, timestamp, translation).
+
+        Lines are deleted from highest index to lowest so earlier indices
+        remain valid throughout.  *select_index* is re-clamped afterward;
+        if all lines are deleted it becomes -1.
+        """
+        if not indices:
+            return
+        self._push_undo()
+        for i in sorted(indices, reverse=True):
+            if 0 <= i < len(self.lyric):
+                del self.lyric[i]
+        if not self.lyric:
+            self.select_index = -1
+        else:
+            self.select_index = guard(self.select_index, 0, len(self.lyric) - 1)
+        self.state_changed.emit()
+
+    def merge_lines(self, indices: set[int]) -> None:
+        """Merge contiguous selected lines into one.
+
+        The merged line takes:
+        - timestamp: earliest non-None timestamp among the selected lines
+        - text: concatenation of all selected lines' text, in order
+        - translation: the first selected line's translation
+
+        *indices* must contain ≥2 consecutive indices; otherwise this is
+        a no-op (the caller should validate adjacency first).
+        """
+        if len(indices) < 2:
+            return
+        sorted_idx = sorted(indices)
+        for i in range(1, len(sorted_idx)):
+            if sorted_idx[i] != sorted_idx[i - 1] + 1:
+                return  # not contiguous — caller should warn before calling
+        first_idx = sorted_idx[0]
+        last_idx = sorted_idx[-1]
+
+        self._push_undo()
+
+        earliest = min(
+            (self.lyric[i].time
+             for i in sorted_idx if self.lyric[i].time is not None),
+            default=None,
+        )
+        merged_text = "".join(self.lyric[i].text for i in sorted_idx)
+        first_translation = self.lyric[first_idx].translation
+
+        merged = LyricLine(time=earliest, text=merged_text,
+                           translation=first_translation)
+        self.lyric[first_idx:last_idx + 1] = [merged]
+
+        self.select_index = first_idx
+        self.state_changed.emit()
+
     def get_state(self, callback: Callable[["LrcStateManager"], None]) -> None:
         """Action: GET_STATE — pass current state to callback."""
         callback(self)

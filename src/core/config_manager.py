@@ -238,8 +238,67 @@ class ConfigManager:
         """
         return self.get_preferences().get("reactionTimeMs", 100)
 
+    def get_undo_seek_back_seconds(self) -> float:
+        """Seconds to seek back after undoing a sync/timestamp (default 3.0).
+
+        When the user presses Ctrl+Z to undo a timestamp operation, the
+        audio playhead jumps back by this many seconds so they can
+        re-listen and re-stamp without manually seeking.  Capped at 10 s.
+        """
+        return float(self.get_preferences().get("undoSeekBackSeconds", 3.0))
+
     def get_remember_draft(self) -> bool:
         return self.get_preferences().get("rememberDraft", True)
+
+    def get_overwrite_source_on_exit(self) -> bool:
+        """Whether to overwrite the source LRC file with draft content on exit.
+
+        When True: before deleting the draft on close, the source LRC file
+        is overwritten with the current draft content.
+        When False: the draft file is kept as-is for the next session.
+        """
+        return self.get_preferences().get("overwriteSourceOnExit", False)
+
+    # ── Overwrite (the single source of truth) ──────────────
+
+    def overwrite_lrc(self, text: str) -> tuple[bool, str]:
+        """Overwrite the source LRC file with *text*.
+
+        Returns ``(success, message)``.
+
+        Safety checks:
+        1. A source LRC path must be recorded and the file must exist.
+        2. When audio is loaded the MP3 stem must match the LRC stem —
+           otherwise a stale ``lastLrcPath`` from a previous session
+           would silently overwrite a different song's LRC file
+           ("张冠李戴").
+        """
+        lrc_path = self.get_last_lrc_path()
+        if not lrc_path:
+            return False, "未找到源歌词文件 — 请先导入歌词文件"
+        if not os.path.isfile(lrc_path):
+            return False, "源歌词文件已不存在"
+
+        lrc_stem = os.path.splitext(os.path.basename(lrc_path))[0]
+
+        # ── Cross-song contamination guard ──────────────────
+        mp3_path = self.get_last_mp3_path()
+        if mp3_path and os.path.isfile(mp3_path):
+            mp3_stem = os.path.splitext(os.path.basename(mp3_path))[0]
+            if mp3_stem != lrc_stem:
+                return False, (
+                    f"音频「{mp3_stem}」与歌词文件「{lrc_stem}」不匹配，"
+                    f"拒绝覆写以防止张冠李戴"
+                )
+
+        # ── Write ───────────────────────────────────────────
+        try:
+            os.makedirs(os.path.dirname(lrc_path), exist_ok=True)
+            with open(lrc_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return True, "歌词已保存"
+        except OSError as e:
+            return False, f"写入失败：{e}"
 
     def get_default_browse_dir(self) -> str:
         return self.get_preferences().get("defaultBrowseDir", "D:/歌手")
@@ -305,6 +364,48 @@ class ConfigManager:
 
         # App-data fallback
         candidates.add(self._lyric_path)
+
+        for path in candidates:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+    def save_draft_to_appdata(self, text: str) -> None:
+        """Persist one draft to the hidden AppData directory.
+
+        Called on exit so the next session can resume even after visible
+        drafts (next to source files) have been cleaned up.
+        """
+        os.makedirs(self._data_dir, exist_ok=True)
+        with open(self._lyric_path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def delete_visible_drafts(self) -> None:
+        """Delete draft files next to the LRC / MP3 source files.
+
+        The AppData fallback draft is intentionally left intact so the
+        next session can resume.
+        """
+        candidates: set[str] = set()
+
+        lrc_path = self.get_last_lrc_path()
+        if lrc_path:
+            lrc_dir = os.path.dirname(lrc_path)
+            if os.path.exists(lrc_dir):
+                stem = os.path.splitext(os.path.basename(lrc_path))[0]
+                candidates.add(
+                    os.path.join(lrc_dir, f"{stem}.lrc-maker-draft.txt")
+                )
+
+        mp3_path = self.get_last_mp3_path()
+        if mp3_path:
+            mp3_dir = os.path.dirname(mp3_path)
+            if os.path.exists(mp3_dir):
+                stem = os.path.splitext(os.path.basename(mp3_path))[0]
+                candidates.add(
+                    os.path.join(mp3_dir, f"{stem}.lrc-maker-draft.txt")
+                )
 
         for path in candidates:
             try:

@@ -1,4 +1,4 @@
-"""Header navigation bar with page tabs."""
+"""Header navigation bar with page tabs and help button."""
 
 from __future__ import annotations
 
@@ -14,12 +14,13 @@ from ..core.constants import PageRoute
 
 
 class HeaderBar(QWidget):
-    """Top navigation bar with app title and tab buttons.
+    """Top navigation bar with app title, tab buttons, and help.
 
-    Tabs: Home | Editor | Synchronizer | Preferences
+    Tabs: Home | Synchronizer | MetaEditor | Preferences | Help(?)
     """
 
     page_requested = pyqtSignal(int)
+    help_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -56,6 +57,14 @@ class HeaderBar(QWidget):
             layout.addWidget(btn)
             self._buttons[route] = btn
 
+        # Help button — same visual style as navTabs but not a router
+        self._help_btn = QPushButton("?")
+        self._help_btn.setObjectName("navTab")
+        self._help_btn.setFlat(True)
+        self._help_btn.setToolTip("打开帮助（快捷键 ?）")
+        self._help_btn.clicked.connect(self.help_requested.emit)
+        layout.addWidget(self._help_btn)
+
         # Default selection
         self._buttons[PageRoute.HOME].setChecked(True)
         self._active_route = PageRoute.HOME
@@ -72,4 +81,3 @@ class HeaderBar(QWidget):
         for r, btn in self._buttons.items():
             btn.setChecked(r == route)
         self._active_route = route
-

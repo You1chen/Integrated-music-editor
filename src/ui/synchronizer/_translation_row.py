@@ -44,6 +44,7 @@ class _TranslationRow(QFrame):
         self._line = line
         self._theme_color = theme_color
         self._is_dark = is_dark
+        self._multi_selected = False
 
         self.setFixedHeight(34)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -71,11 +72,15 @@ class _TranslationRow(QFrame):
     def lyric_index(self) -> int:
         return self._index
 
-    def update_state(self, line: LyricLine, theme_color: str, is_dark: bool) -> None:
+    def update_state(
+        self, line: LyricLine, theme_color: str, is_dark: bool,
+        multi_selected: bool = False,
+    ) -> None:
         """Update translation text from state (skips if user is editing)."""
         self._line = line
         self._theme_color = theme_color
         self._is_dark = is_dark
+        self._multi_selected = multi_selected
         if not self._trans_edit.hasFocus():
             self._trans_edit.setText(line.translation)
         self._restyle()
@@ -91,10 +96,11 @@ class _TranslationRow(QFrame):
         fg = "#eeeeee" if self._is_dark else "#111111"
         theme = self._theme_color
 
+        border_style = f"3px solid {theme}"
         self.setStyleSheet(
             f"_TranslationRow {{"
             f"  background-color: transparent;"
-            f"  border-left: 3px solid {theme};"
+            f"  border-left: {border_style};"
             f"}}"
         )
 

@@ -73,6 +73,9 @@ ACTION_LABELS: Dict[InputAction, str] = {
     # Lyric editing actions
     InputAction.COPY_LINE: "复制歌词行",
     InputAction.SPLIT_LYRIC: "拆分歌词行",
+    InputAction.DELETE_LINES: "删除选中行",
+    InputAction.MERGE_LINES: "合并选中行",
+    InputAction.SELECT_ALL: "全选",
     # Toolbar actions
     InputAction.SAVE: "保存",
     InputAction.EXPORT: "导出/另存",
@@ -97,6 +100,8 @@ ACTION_GROUPS: List[Tuple[str, List[InputAction]]] = [
     ]),
     ("歌词编辑", [
         InputAction.COPY_LINE, InputAction.SPLIT_LYRIC,
+        InputAction.DELETE_LINES, InputAction.MERGE_LINES,
+        InputAction.SELECT_ALL,
     ]),
     ("工具栏", [
         InputAction.SAVE, InputAction.EXPORT,
@@ -172,7 +177,6 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
     ],
     InputAction.DELETE_TIME: [
         KeyBinding(code=Qt.Key.Key_Backspace),
-        KeyBinding(code=Qt.Key.Key_Delete),
     ],
     InputAction.RESET_OFFSET: [
         KeyBinding(code=Qt.Key.Key_0),
@@ -238,6 +242,15 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
     ],
     InputAction.SPLIT_LYRIC: [
         KeyBinding(code=Qt.Key.Key_D, ctrl_key=True),
+    ],
+    InputAction.DELETE_LINES: [
+        KeyBinding(code=Qt.Key.Key_Delete),
+    ],
+    InputAction.MERGE_LINES: [
+        KeyBinding(code=Qt.Key.Key_H, ctrl_key=True),
+    ],
+    InputAction.SELECT_ALL: [
+        KeyBinding(code=Qt.Key.Key_A, ctrl_key=True),
     ],
 
     # Toolbar actions

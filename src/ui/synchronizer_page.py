@@ -106,6 +106,7 @@ class SynchronizerPage(QWidget):
         self._suppress_refresh = False
         self._translation_mode = False
         self._append_target_index: int | None = None  # row index for append-after mode
+        self._multi_selected: set[int] = set()  # transient multi-selection
 
         # Connect state changes
         self._mw.lrc_state.state_changed.connect(self._refresh_rows)
@@ -303,11 +304,14 @@ class SynchronizerPage(QWidget):
             if not input_text:
                 self._mw.toast_overlay.show_toast("warning", "未输入任何文本")
                 return
-            # Defer so the modal dialog fully unwinds before we start
+            # Capture checkbox value now — after accept() the dialog
+            # and its children are destroyed, so the lambda cannot
+            # reference cb_overwrite directly.
+            overwrite = cb_overwrite.isChecked()
             QTimer.singleShot(
                 0,
                 lambda: perform_pattern_matching(
-                    self, input_text, overwrite=cb_overwrite.isChecked()
+                    self, input_text, overwrite=overwrite
                 ),
             )
 
@@ -540,30 +544,22 @@ class SynchronizerPage(QWidget):
 
     def _on_save(self) -> None:
         """Save current state by overwriting the source LRC file."""
-        last_path = self._mw.config.get_last_lrc_path()
-        if not last_path or not os.path.exists(last_path):
-            self._mw.toast_overlay.show_toast(
-                "warning", "未找到源文件，请先导入歌词文件"
-            )
-            return
-
         if self._mw.config.get_show_save_warning():
-            self._show_save_warning_dialog(last_path)
+            self._show_save_warning_dialog()
         else:
-            self._do_save(last_path)
+            self._do_save()
 
-    def _do_save(self, path: str) -> None:
-        """Actually write the LRC string to the given path."""
+    def _do_save(self) -> None:
+        """Overwrite the source LRC file (single implementation)."""
         text = self._mw.lrc_state.stringify(self._mw.format_options)
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
+        ok, msg = self._mw.config.overwrite_lrc(text)
+        if ok:
             self._mw.config.delete_draft()
-            self._mw.toast_overlay.show_toast("success", "歌词已保存")
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"保存失败：{e}")
+            self._mw.toast_overlay.show_toast("success", msg)
+        else:
+            QMessageBox.warning(self, "错误", msg)
 
-    def _show_save_warning_dialog(self, path: str) -> None:
+    def _show_save_warning_dialog(self) -> None:
         """Show the overwrite warning dialog with preview/cancel options."""
         dialog = QDialog(self)
         dialog.setWindowTitle("保存确认")
@@ -613,7 +609,7 @@ class SynchronizerPage(QWidget):
             return
 
         # User confirmed save (after preview)
-        self._do_save(path)
+        self._do_save()
 
     def _on_save_preview(self, warning_dialog: QDialog) -> None:
         """Preview then confirm save flow from the warning dialog."""
@@ -766,6 +762,10 @@ class SynchronizerPage(QWidget):
 
         elif action == InputAction.UNDO:
             event.accept()
+            # NOTE: The actual undo + seek-back logic lives in
+            # MainWindow.handle_global_key(), which intercepts Ctrl+Z
+            # before this keyPressEvent ever receives it.  This handler
+            # is a fallback in case event routing changes in the future.
             state.undo()
             self._append_target_index = state.select_index
             self._scroll_to_row(state.select_index)
@@ -822,8 +822,27 @@ class SynchronizerPage(QWidget):
             self._mw.footer_bar.audio_controls._on_load_audio()
             return
 
+        elif action == InputAction.DELETE_LINES:
+            event.accept()
+            self._on_delete_selected()
+            return
+
+        elif action == InputAction.MERGE_LINES:
+            event.accept()
+            self._on_merge_selected()
+            return
+
+        elif action == InputAction.SELECT_ALL:
+            event.accept()
+            n = len(state.lyric)
+            if n > 0:
+                self._multi_selected = set(range(n))
+                state.select(lambda _: 0)
+            return
+
         # Esc → deselect current row
         if event.key() == Qt.Key.Key_Escape and not event.modifiers():
+            self._multi_selected.clear()
             state.deselect()
             self._append_target_index = None
             event.accept()
@@ -849,7 +868,8 @@ class SynchronizerPage(QWidget):
                 if isinstance(child, (_LyricRow, _TranslationRow)):
                     return False
                 child = child.parentWidget()
-            # Click on empty space → deselect
+            # Click on empty space → deselect + clear multi-select
+            self._multi_selected.clear()
             self._mw.lrc_state.deselect()
             self._append_target_index = None
             return False
@@ -902,6 +922,9 @@ class SynchronizerPage(QWidget):
             row.lyric_split_done.connect(self._on_lyric_split_done)
             row.append_requested.connect(self._on_append_lyric)
             row.row_clicked.connect(self._on_row_clicked)
+            row.multi_select_toggled.connect(self._on_multi_select_toggled)
+            row.delete_requested.connect(self._on_delete_selected)
+            row.merge_requested.connect(self._on_merge_selected)
             self._rows_layout.addWidget(row)
             self._rows.append(row)
 
@@ -957,8 +980,13 @@ class SynchronizerPage(QWidget):
 
         # Rebuild if count changed
         if len(self._rows) != len(state.lyric):
+            self._multi_selected.clear()
             self._rebuild_all()
             return
+
+        # Prune stale multi-selection indices
+        n = len(state.lyric)
+        self._multi_selected = {i for i in self._multi_selected if 0 <= i < n}
 
         sync_mode = self._mw.config.get_sync_mode()
 
@@ -968,6 +996,7 @@ class SynchronizerPage(QWidget):
             at_current = (
                 sync_mode == SyncMode.HIGHLIGHT and i == state.current_index
             )
+            multi_sel = i in self._multi_selected
             row.update_state(
                 line=line,
                 selected=selected,
@@ -977,6 +1006,7 @@ class SynchronizerPage(QWidget):
                 space_end=space_end,
                 theme_color=theme_color,
                 is_dark=is_dark,
+                multi_selected=multi_sel,
             )
 
         # Update translation rows if active
@@ -987,6 +1017,7 @@ class SynchronizerPage(QWidget):
                         line=state.lyric[i],
                         theme_color=theme_color,
                         is_dark=is_dark,
+                        multi_selected=(i in self._multi_selected),
                     )
 
     # ── Internal: Signal Handlers ──────────────────────────
@@ -1022,6 +1053,35 @@ class SynchronizerPage(QWidget):
 
                 QTimer.singleShot(delay_ms, _seek_back)
 
+    def _on_jump_prev_timestamp(self) -> None:
+        """Left arrow (when lyric selected): seek to the previous line's
+        timestamp without changing selection.  Searches upward for the
+        first line with a valid (> 0) timestamp."""
+        state = self._mw.lrc_state
+        idx = state.select_index
+        if idx < 0:
+            return
+        for i in range(idx - 1, -1, -1):
+            t = state.lyric[i].time
+            if t is not None and t > 0:
+                self._mw.audio_manager.current_time = t
+                return
+
+    def _on_jump_next_timestamp(self) -> None:
+        """Right arrow (when lyric selected): seek to the next line's
+        timestamp without changing selection.  If the immediate next
+        line has timestamp 0 or None (not yet stamped), do nothing."""
+        state = self._mw.lrc_state
+        idx = state.select_index
+        if idx < 0:
+            return
+        n = len(state.lyric)
+        for i in range(idx + 1, n):
+            t = state.lyric[i].time
+            if t is not None and t > 0:
+                self._mw.audio_manager.current_time = t
+                return
+
     def _on_seek(self, time: float) -> None:
         """Seek audio to a specific time (timestamp button clicked)."""
         audio = self._mw.audio_manager
@@ -1056,10 +1116,86 @@ class SynchronizerPage(QWidget):
         self._mw.lrc_state.set_time(time_val)
 
     def _on_row_clicked(self, index: int) -> None:
-        """User clicked the text area of a row → select it and set append target."""
+        """User clicked the text area of a row → single-select, clear multi-select."""
+        self._multi_selected.clear()
         self._mw.lrc_state.select(lambda _: index)
         self._append_target_index = index
         self.setFocus()
+
+    def _on_multi_select_toggled(self, index: int) -> None:
+        """Ctrl+Left-click on text area: toggle row in/out of multi-selection.
+
+        When the multi-selection set is empty and the user starts a new
+        group, the previously single-selected row (select_index) is
+        automatically included so that normal-click + Ctrl-click chains
+        form a single selection group.
+        """
+        if index in self._multi_selected:
+            self._multi_selected.discard(index)
+        else:
+            if not self._multi_selected:
+                # First Ctrl+click — pull the current select_index into the group
+                cur = self._mw.lrc_state.select_index
+                n = len(self._mw.lrc_state.lyric)
+                if 0 <= cur < n and cur != index:
+                    self._multi_selected.add(cur)
+            self._multi_selected.add(index)
+        # Also set select_index so the primary cursor follows
+        self._mw.lrc_state.select(lambda _: index)
+        self._refresh_rows()
+
+    def _get_effective_selection(self) -> set[int]:
+        """Return the set of indices considered selected for batch operations.
+
+        When multi-select is active, returns a copy of those indices.
+        Otherwise falls back to the single select_index (if valid).
+        """
+        if self._multi_selected:
+            return set(self._multi_selected)
+        idx = self._mw.lrc_state.select_index
+        if 0 <= idx < len(self._mw.lrc_state.lyric):
+            return {idx}
+        return set()
+
+    def _on_delete_selected(self) -> None:
+        """Delete all selected lines (from context menu or Delete key)."""
+        selected = self._get_effective_selection()
+        if not selected:
+            return
+        count = len(selected)
+        self._mw.lrc_state.delete_lines(selected)
+        self._multi_selected.clear()
+        self._append_target_index = None
+        if count == 1:
+            self._mw.toast_overlay.show_toast("success", "已删除 1 行")
+        else:
+            self._mw.toast_overlay.show_toast("success", f"已删除 {count} 行")
+
+    def _on_merge_selected(self) -> None:
+        """Merge all selected lines (from context menu or Ctrl+H)."""
+        selected = self._get_effective_selection()
+        if len(selected) < 2:
+            self._mw.toast_overlay.show_toast(
+                "warning", "至少需要选中两行才能合并"
+            )
+            return
+        sorted_idx = sorted(selected)
+        is_adjacent = all(
+            sorted_idx[i] == sorted_idx[i - 1] + 1
+            for i in range(1, len(sorted_idx))
+        )
+        if not is_adjacent:
+            self._mw.toast_overlay.show_toast(
+                "warning", "选中的行不相邻，无法合并"
+            )
+            return
+        count = len(selected)
+        self._mw.lrc_state.merge_lines(selected)
+        self._multi_selected.clear()
+        self._append_target_index = None
+        self._mw.toast_overlay.show_toast(
+            "success", f"已将 {count} 行合并为 1 行"
+        )
 
     def _on_edit_lyric(self, index: int) -> None:
         """Enter inline edit mode on the specified row."""
@@ -1155,12 +1291,11 @@ class SynchronizerPage(QWidget):
     def _update_input_visibility(self) -> None:
         """Show or hide the lyric input box.
 
-        Visible only when a song is active AND translation mode is off.
+        Always visible on the synchronizer page except when translation
+        mode is active.  Even an empty draft needs an input so the user
+        can start typing lyrics.
         """
-        state = self._mw.lrc_state
-        audio = self._mw.audio_manager
-        has_song = len(state.lyric) > 0 or bool(audio.src)
-        self._lyric_input.setVisible(has_song and not self._translation_mode)
+        self._lyric_input.setVisible(not self._translation_mode)
 
     def _restyle_input(self) -> None:
         """Apply theme styling to the lyric input box."""

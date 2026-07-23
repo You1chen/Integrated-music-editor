@@ -66,6 +66,9 @@ class InputAction(StrEnum):
     # Lyric editing actions
     COPY_LINE = "copyLine"
     SPLIT_LYRIC = "splitLyric"
+    DELETE_LINES = "deleteLines"
+    MERGE_LINES = "mergeLines"
+    SELECT_ALL = "selectAll"
 
     # Toolbar actions
     SAVE = "save"

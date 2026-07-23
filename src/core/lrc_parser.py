@@ -1,6 +1,20 @@
 """Pure Python port of @lrc-maker/lrc-parser.
 
 Parses LRC (Lyrics) formatted text into structured data and vice versa.
+
+Translation convention
+---------------------
+**Every** timestamped line (body / original-text line) ends with
+exactly 4 spaces.  A line that does *not* end with 4 spaces and
+shares its timestamp with the previous (marked) line is a translation.
+
+Music players ignore trailing whitespace, so the marker is invisible
+during playback — it exists purely as a semantic signal for this parser.
+
+:func:`is_translation_marker` is the single function that encodes this
+rule.  Every piece of code that needs to know whether a line is a body
+or a translation should call this function rather than hard-coding a
+space-count check.
 """
 
 from __future__ import annotations
@@ -14,6 +28,21 @@ Fixed = Literal[0, 1, 2, 3]
 # Regex patterns — identical to the TypeScript version
 _TIME_TAG_RE = re.compile(r"\[\s*(\d{1,3}):(\d{1,2}(?:[:.]\d{1,3})?)\s*]")
 _INFO_TAG_RE = re.compile(r"\[\s*(\w{1,6})\s*:(.*?)]")
+
+# ── Translation marker ──────────────────────────────────────
+
+_TRANSLATION_MARKER = "    "  # exactly 4 spaces
+
+
+def is_translation_marker(text: str) -> bool:
+    """Return ``True`` when *text* ends with the translation marker.
+
+    A lyric line whose text ends with 4 spaces owns the **next**
+    timestamped line as its translation.  Call this function from
+    anywhere that needs to make that determination — do not inline
+    a ``.endswith("    ")`` check.
+    """
+    return text.endswith(_TRANSLATION_MARKER)
 
 
 @dataclass
@@ -50,12 +79,20 @@ class FormatOptions:
 def parse(lrc_string: str, options: Optional[TrimOptions] = None) -> LrcState:
     """Parse an LRC-formatted string into structured state.
 
-    Args:
-        lrc_string: Raw LRC text content.
-        options: Trim options for whitespace handling.
+    **Translation detection** (two-pass):
 
-    Returns:
-        LrcState with parsed info metadata and lyric lines.
+    1. Every line is parsed normally — timestamps, info tags, untimed text.
+    2. A second pass classifies each timestamped line:
+       - Has 4 trailing spaces → **body line** (strip marker).
+         If the *next* line shares the same timestamp but has *no* marker,
+         it is merged as this line's translation.
+       - No trailing spaces → **translation** of the previous body line
+         (if timestamps match and the previous line is marked).  Legacy
+         files (no markers anywhere) are handled correctly: unmarked
+         lines simply stay as independent body lines.
+
+    Music players ignore trailing whitespace, so the markers are invisible
+    during normal playback.
     """
     if options is None:
         options = TrimOptions()
@@ -65,71 +102,92 @@ def parse(lrc_string: str, options: Optional[TrimOptions] = None) -> LrcState:
     info: Dict[str, str] = {}
     lyric: List[LyricLine] = []
 
+    # ── Pass 1: parse every line ────────────────────────────
     for line in lines:
-        # Skip genuinely empty lines — they carry no useful information
-        # and would be emitted as blank lines by stringify().
         if not line:
             continue
-        # Line does not start with "["
-        if line[0] != "[":
+
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+
+        if stripped and stripped[0] == "[":
+            match = _TIME_TAG_RE.search(stripped)
+            if match is not None:
+                mm = int(match.group(1))
+                ss = float(match.group(2).replace(":", "."))
+                text = stripped[match.end():]
+
+                lyric.append(LyricLine(
+                    time=mm * 60 + ss,
+                    text=text,
+                ))
+                continue
+
+            # Info tag (only at column 0)
+            if indent == 0:
+                match = _INFO_TAG_RE.match(line)
+                if match is not None:
+                    value = match.group(2).strip()
+                    if value:
+                        info[match.group(1)] = value
+                    continue
+
+            # "[" but not timestamp or info → untimed text
             lyric.append(LyricLine(text=line))
             continue
 
-        # Now, line starts with "[" — try time tag first
-        match = _TIME_TAG_RE.search(line)
-        if match is not None:
-            mm = int(match.group(1))
-            ss = float(match.group(2).replace(":", "."))
-            text = line[match.end():]
-
-            lyric.append(LyricLine(
-                time=mm * 60 + ss,
-                text=text,
-            ))
-            continue
-
-        # Try info tag
-        match = _INFO_TAG_RE.match(line)
-        if match is not None:
-            value = match.group(2).strip()
-            if value == "":
-                continue
-            info[match.group(1)] = value
-            continue
-
-        # Starts with "[" but doesn't match time or info tag
+        # Untimed text
         lyric.append(LyricLine(text=line))
 
-    # Merge consecutive lines with the same timestamp: second line → translation
-    merged: List[LyricLine] = []
+    # ── Pass 2: classify body vs translation via 4-space marker ──
+    # Rule: every body line ends with 4 spaces.  A line without the
+    # marker that shares a timestamp with the preceding body is a
+    # translation.  Legacy files (no markers at all) fall through
+    # harmlessly — unmarked lines simply stay as independent bodies.
     i = 0
     while i < len(lyric):
         line = lyric[i]
-        # Peek at next line: if same timestamp (and not None) and current line has no translation
-        if (
-            line.time is not None
-            and not line.translation
-            and i + 1 < len(lyric)
-            and lyric[i + 1].time == line.time
-        ):
-            line.translation = lyric[i + 1].text
-            i += 2
-        else:
+        if line.time is None:
             i += 1
-        merged.append(line)
+            continue
 
-    # Apply trimming
+        if is_translation_marker(line.text):
+            # ── Body line ──
+            line.text = line.text.rstrip()  # clean the marker
+            # Is the next line a translation of this one?
+            if (
+                i + 1 < len(lyric)
+                and lyric[i + 1].time is not None
+                and lyric[i + 1].time == line.time
+                and not is_translation_marker(lyric[i + 1].text)
+            ):
+                line.translation = lyric[i + 1].text
+                del lyric[i + 1]
+        else:
+            # ── No marker: translation of the previous body? ──
+            if (
+                i > 0
+                and lyric[i - 1].time is not None
+                and line.time == lyric[i - 1].time
+                and is_translation_marker(lyric[i - 1].text)
+            ):
+                lyric[i - 1].translation = line.text
+                del lyric[i]
+                i -= 1  # reprocess the (now-merged) body line
+        i += 1
+
+    # ── Apply trimming ──────────────────────────────────────
     if options.trim_start and options.trim_end:
-        for line in merged:
+        for line in lyric:
             line.text = line.text.strip()
     elif options.trim_start:
-        for line in merged:
+        for line in lyric:
             line.text = line.text.lstrip()
     elif options.trim_end:
-        for line in merged:
+        for line in lyric:
             line.text = line.text.rstrip()
 
-    return LrcState(info=info, lyric=merged)
+    return LrcState(info=info, lyric=lyric)
 
 
 def convert_time_to_tag(time: Optional[float], fixed: Fixed, with_brackets: bool = True) -> str:
@@ -179,12 +237,9 @@ def format_text(text: str, space_start: int, space_end: int) -> str:
 def stringify(state: LrcState, options: FormatOptions) -> str:
     """Convert structured LRC state back to an LRC-formatted string.
 
-    Args:
-        state: The parsed LRC state.
-        options: Format options for stringification.
-
-    Returns:
-        LRC-formatted string.
+    Every timestamped (body) line is suffixed with 4 spaces so that
+    :func:`parse` can distinguish body lines from translations:
+    a line with the marker is a body; one without is a translation.
     """
     # Info tags
     infos = [f"[{name}: {value}]" for name, value in state.info.items()]
@@ -193,17 +248,18 @@ def stringify(state: LrcState, options: FormatOptions) -> str:
     lines = []
     for line in state.lyric:
         if line.time is None:
-            # Skip empty lines (defense-in-depth: parse() already filters
-            # them, but state could be mutated by external code).
             if line.text:
                 lines.append(line.text)
         else:
             text = format_text(line.text, options.space_start, options.space_end)
             tag = convert_time_to_tag(line.time, options.fixed)
-            lines.append(f"{tag}{text}")
-            # Output translation as a separate line with the same timestamp
+
+            # Every body line carries the 4-space marker
+            lines.append(f"{tag}{text}{_TRANSLATION_MARKER}")
             if line.translation:
-                trans_text = format_text(line.translation, options.space_start, options.space_end)
+                trans_text = format_text(
+                    line.translation, options.space_start, options.space_end,
+                )
                 lines.append(f"{tag}{trans_text}")
 
     return options.end_of_line.join(infos + lines)

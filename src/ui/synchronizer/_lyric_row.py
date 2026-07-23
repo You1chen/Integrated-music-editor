@@ -42,11 +42,16 @@ class _LyricRow(QFrame):
     seek_requested = pyqtSignal(float)
     edit_requested = pyqtSignal(int)
     row_clicked = pyqtSignal(int)
+    multi_select_toggled = pyqtSignal(int)
 
     # Context menu → inline mode triggers
     edit_lyric_requested = pyqtSignal(int)
     split_lyric_requested = pyqtSignal(int)
     append_requested = pyqtSignal(int)
+
+    # Batch operations (act on all selected rows)
+    delete_requested = pyqtSignal()
+    merge_requested = pyqtSignal()
 
     # Result signals (emitted when inline editing/splitting is done)
     lyric_text_changed = pyqtSignal(int, str)
@@ -72,6 +77,7 @@ class _LyricRow(QFrame):
         self._theme_color = theme_color
         self._is_dark = is_dark
         self._selected = False
+        self._multi_selected = False
         self._at_current = False
 
         self.setFixedHeight(36)
@@ -145,10 +151,12 @@ class _LyricRow(QFrame):
         space_end: int,
         theme_color: str,
         is_dark: bool,
+        multi_selected: bool = False,
     ) -> None:
         """Update all display state at once (skips text if user is editing)."""
         self._line = line
         self._selected = selected
+        self._multi_selected = multi_selected
         self._at_current = at_current
         self._fixed = fixed
         self._space_start = space_start
@@ -362,6 +370,9 @@ class _LyricRow(QFrame):
         if self._selected and self._display_stack.currentIndex() == 0:
             bg = f"{theme}"
             border = f"1px solid {theme}"
+        elif self._multi_selected and self._display_stack.currentIndex() == 0:
+            bg = f"{theme}"
+            border = f"1px solid {theme}"
         elif self._at_current and self._display_stack.currentIndex() == 0:
             bg = f"{theme}"
 
@@ -432,16 +443,30 @@ class _LyricRow(QFrame):
         )
 
     def mousePressEvent(self, event) -> None:
-        """Clicking on the text area (not the button) selects the row.
-        Ctrl+click on text area appends an empty line below.
+        """Handle mouse clicks on the row.
+
+        On text area (not timestamp button):
+        - Left click: single-select this row (clears multi-select)
+        - Ctrl+Left click: toggle this row in multi-selection
+        - Ctrl+Right click: append an empty line below
+        - Right click (no Ctrl): falls through to contextMenuEvent
         """
-        if not self._time_btn.geometry().contains(event.pos()):
-            from PyQt6.QtWidgets import QApplication
-            modifiers = QApplication.keyboardModifiers()
-            if modifiers & Qt.KeyboardModifier.ControlModifier:
-                self.append_requested.emit(self._index)
+        if self._time_btn.geometry().contains(event.pos()):
+            super().mousePressEvent(event)
+            return
+
+        from PyQt6.QtWidgets import QApplication
+        modifiers = QApplication.keyboardModifiers()
+        ctrl_held = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            if ctrl_held:
+                self.multi_select_toggled.emit(self._index)
             else:
                 self.row_clicked.emit(self._index)
+        elif event.button() == Qt.MouseButton.RightButton:
+            if ctrl_held:
+                self.append_requested.emit(self._index)
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
@@ -451,17 +476,21 @@ class _LyricRow(QFrame):
         super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event) -> None:
-        """Right-click context menu: edit / split / append."""
-        from PyQt6.QtWidgets import QMenu
+        """Right-click context menu: edit / split / append / delete / merge.
 
-        # Auto-select this row on right-click
-        self.row_clicked.emit(self._index)
+        Does NOT clear multi-selection — the user can right-click a
+        multi-selected group and act on all of them at once.
+        """
+        from PyQt6.QtWidgets import QMenu
 
         menu = QMenu(self)
 
         edit_action = menu.addAction("✏️ 编辑")
         split_action = menu.addAction("✂️ 拆分")
-        append_action = menu.addAction("📝 追加")
+        append_action = menu.addAction("📝 追加 (Ctrl+右键)")
+        menu.addSeparator()
+        delete_action = menu.addAction("🗑️ 删除 (Delete)")
+        merge_action = menu.addAction("🔗 合并 (Ctrl+H)")
 
         edit_action.triggered.connect(
             lambda: self.edit_lyric_requested.emit(self._index)
@@ -471,6 +500,12 @@ class _LyricRow(QFrame):
         )
         append_action.triggered.connect(
             lambda: self.append_requested.emit(self._index)
+        )
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit()
+        )
+        merge_action.triggered.connect(
+            lambda: self.merge_requested.emit()
         )
 
         menu.exec(event.globalPos())
