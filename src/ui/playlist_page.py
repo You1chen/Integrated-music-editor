@@ -13,7 +13,6 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -125,6 +124,20 @@ def _first(lst) -> str:
         return str(lst[0]) if lst else ""
     except (IndexError, TypeError):
         return ""
+
+
+def _migrate_root_dir(cache: dict) -> str:
+    """Read root_dir from cache, falling back to old root_dirs format.
+
+    v1 cache used ``root_dirs`` (list); v2 uses ``root_dir`` (str).
+    """
+    root_dir = cache.get("root_dir", "")
+    if root_dir:
+        return root_dir
+    old_dirs: list[str] = cache.get("root_dirs", [])
+    if old_dirs:
+        return old_dirs[0]
+    return ""
 
 
 # ── Tree data node ────────────────────────────────────────────
@@ -245,13 +258,12 @@ class _SongRow(QWidget):
     def _apply_bg(self) -> None:
         if self._hover:
             theme = _CURRENT_THEME_COLOR
-            if _CURRENT_DARK:
-                bg = f"background-color: {theme}33; border-radius: 6px;"
-            else:
-                bg = f"background-color: {theme}22; border-radius: 6px;"
+            alpha = "33" if _CURRENT_DARK else "22"
+            self.setStyleSheet(
+                f"background-color: {theme}{alpha}; border-radius: 6px;"
+            )
         else:
-            bg = "background: transparent;"
-        self.setStyleSheet(f"_SongRow {{ {bg} }}")
+            self.setStyleSheet("background: transparent;")
 
     def matches(self, text: str) -> bool:
         """Check if this song matches a search filter (case-insensitive)."""
@@ -433,8 +445,8 @@ class PlaylistPage(QScrollArea):
     def _load_cache(self) -> None:
         cache = self._mw.config.get_playlist_cache()
         songs = cache.get("songs", [])
-        self._root_dir = cache.get("root_dir", "")
-        if songs and self._root_dir:
+        self._root_dir = _migrate_root_dir(cache)
+        if songs and self._root_dir and os.path.isdir(self._root_dir):
             self._all_songs = songs
             self._rebuild_ui()
         else:
@@ -455,7 +467,7 @@ class PlaylistPage(QScrollArea):
     def _on_rescan(self) -> None:
         if not self._root_dir:
             cache = self._mw.config.get_playlist_cache()
-            self._root_dir = cache.get("root_dir", "")
+            self._root_dir = _migrate_root_dir(cache)
         if not self._root_dir:
             self._mw.toast_overlay.show_toast(
                 "warning", "请先选择文件夹再进行扫描"
@@ -629,5 +641,5 @@ class PlaylistPage(QScrollArea):
         songs = cache.get("songs", [])
         if songs and not self._all_songs:
             self._all_songs = songs
-            self._root_dir = cache.get("root_dir", "")
+            self._root_dir = _migrate_root_dir(cache)
             self._rebuild_ui()
