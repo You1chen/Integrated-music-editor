@@ -88,8 +88,7 @@ class FooterBar(QWidget):
 
         if ext in audio_exts:
             # Load audio
-            if self._main_window.config.get_remember_last_mp3():
-                self._main_window.config.set_last_mp3_path(file_path)
+            self._main_window.config.remember_mp3_path(file_path)
             self._main_window.audio_manager.set_source(
                 QUrl.fromLocalFile(file_path).toString()
             )
@@ -98,8 +97,7 @@ class FooterBar(QWidget):
             )
         elif ext in text_exts:
             # Load lyrics text
-            if self._main_window.config.get_remember_last_lrc():
-                self._main_window.config.set_last_lrc_path(file_path)
+            self._main_window.config.remember_lrc_path(file_path)
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()

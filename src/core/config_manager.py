@@ -34,6 +34,9 @@ class ConfigManager:
 
         self._config_path = os.path.join(self._data_dir, "config.json")
         self._draft_path = os.path.join(self._data_dir, "draft.lrc")
+        self._playlist_cache_path = os.path.join(
+            self._data_dir, "playlist_cache.json"
+        )
 
         # Lazy-loaded persistent cache
         self._config: Optional[Dict[str, Any]] = None
@@ -126,6 +129,16 @@ class ConfigManager:
     def get_remember_last_mp3(self) -> bool:
         return self.get_preferences().get("rememberLastMp3", True)
 
+    def remember_lrc_path(self, path: str) -> None:
+        """Set *lastLrcPath* if the remember-Last-LRC preference is on."""
+        if self.get_remember_last_lrc():
+            self.set_last_lrc_path(path)
+
+    def remember_mp3_path(self, path: str) -> None:
+        """Set *lastMp3Path* if the remember-last-MP3 preference is on."""
+        if self.get_remember_last_mp3():
+            self.set_last_mp3_path(path)
+
     def get_remember_playback_rate(self) -> bool:
         return self.get_preferences().get("rememberPlaybackRate", True)
 
@@ -179,7 +192,7 @@ class ConfigManager:
         Returns ``(success, message)``.
 
         Safety checks:
-        1. A source LRC path must be recorded and the file must exist.
+        1. A source LRC path must be recorded.
         2. When audio is loaded the MP3 stem must match the LRC stem —
            otherwise a stale ``lastLrcPath`` from a previous session
            would silently overwrite a different song's LRC file
@@ -187,9 +200,7 @@ class ConfigManager:
         """
         lrc_path = self.get_last_lrc_path()
         if not lrc_path:
-            return False, "未找到源歌词文件 — 请先导入歌词文件"
-        if not os.path.isfile(lrc_path):
-            return False, "源歌词文件已不存在"
+            return False, "未找到源歌词文件 — 请先导入歌词文件或新建草稿"
 
         lrc_stem = os.path.splitext(os.path.basename(lrc_path))[0]
 
@@ -329,3 +340,40 @@ class ConfigManager:
     def has_api_configs(self) -> bool:
         """Return True when at least one API config is saved."""
         return len(self.get_api_configs()) > 0
+
+    # ── Persistent: Playlist Cache ──────────────────────────
+
+    def get_playlist_cache(self) -> "dict[str, Any]":
+        """Read the playlist cache JSON (scan results + likes)."""
+        try:
+            with open(self._playlist_cache_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def set_playlist_cache(self, data: "dict[str, Any]") -> None:
+        """Write the playlist cache JSON."""
+        with open(self._playlist_cache_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def get_playlist_root_dirs(self) -> "list[str]":
+        """Return the cached root directories for playlist scanning."""
+        return self.get_playlist_cache().get("root_dirs", [])
+
+    def toggle_playlist_like(self, path: str) -> bool:
+        """Toggle the liked state of a song in the playlist cache.
+
+        Returns the new liked state (True = liked).
+        """
+        cache = self.get_playlist_cache()
+        songs: list[dict] = cache.get("songs", [])
+        for song in songs:
+            if song.get("path") == path:
+                song["liked"] = not song.get("liked", False)
+                result = song["liked"]
+                break
+        else:
+            return False
+        cache["songs"] = songs
+        self.set_playlist_cache(cache)
+        return result

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
 import os
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QLineEdit,
     QMainWindow,
     QPlainTextEdit,
@@ -51,6 +53,9 @@ class MainWindow(QMainWindow):
         self._closing = False
         # Guard against _save_state during initial draft/file restoration
         self._restoring_draft = False
+        # Track which audio last triggered _try_load_matching_lrc
+        # (used to detect audio switches and clear stale lyrics)
+        self._last_audio_for_lrc: str = ""
 
         # Load saved preferences
         prefs = self.config.get_preferences()
@@ -152,8 +157,7 @@ class MainWindow(QMainWindow):
         # intercepted BEFORE they reach the focused child widget.
         # This way Space → timestamp always works when a lyric is
         # selected, even if focus is on the play button or elsewhere.
-        from PyQt6.QtWidgets import QApplication as QA
-        app_instance = QA.instance()
+        app_instance = QApplication.instance()
         if app_instance:
             app_instance.installEventFilter(self)
 
@@ -171,12 +175,10 @@ class MainWindow(QMainWindow):
         focus so that dialogs (like pattern-match / AI assist) receive
         normal text input.
         """
-        from PyQt6.QtCore import QEvent
         if event.type() != QEvent.Type.KeyPress:
             return super().eventFilter(obj, event)
 
         # ── Don't steal keys from text-input widgets ──
-        from PyQt6.QtWidgets import QApplication
         focus_widget = QApplication.focusWidget()
         if focus_widget is not None and isinstance(
             focus_widget, (QLineEdit, QPlainTextEdit, QTextEdit)
@@ -291,7 +293,6 @@ class MainWindow(QMainWindow):
         # Rate uses log scale from web app: playbackRate ∈ [1/e, e]
         # rate_slider_value = ln(playbackRate)
         # playbackRate = exp(rate_slider_value)
-        import math
 
         rate = self.audio_manager.playback_rate
 
@@ -406,6 +407,9 @@ class MainWindow(QMainWindow):
         if not path or not os.path.isfile(path):
             return
 
+        previous_audio = self._last_audio_for_lrc
+        self._last_audio_for_lrc = path
+
         base, _ = os.path.splitext(path)
         for ext in (".lrc", ".txt"):
             lrc_path = base + ext
@@ -419,8 +423,7 @@ class MainWindow(QMainWindow):
                     options=self._trim_options,
                     select=0,
                 )
-                if self.config.get_remember_last_lrc():
-                    self.config.set_last_lrc_path(lrc_path)
+                self.config.remember_lrc_path(lrc_path)
                 self.toast_overlay.show_toast(
                     "success",
                     f"已自动加载同名歌词：{os.path.basename(lrc_path)}",
@@ -428,6 +431,16 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             return  # Only load the first match (.lrc preferred over .txt)
+
+        # No matching LRC found for this audio.
+        # If the audio has changed since the last load, clear the previous
+        # song's lyrics so they don't linger.  We track the audio path
+        # directly rather than relying on lastLrcPath (which may not be
+        # set when rememberLastLrc is off, or when lyrics were manually
+        # entered without a file).
+        if previous_audio and previous_audio != path:
+            self.lrc_state.init_from_text("", self._trim_options)
+            self.config.set_last_lrc_path("")  # clear stale path too
 
     def _on_sync_page_changed(self, active: bool) -> None:
         if active:

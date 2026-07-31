@@ -118,3 +118,4 @@ class PageRoute:
     SYNCHRONIZER = 2
     PREFERENCES = 3
     META_EDITOR = 4
+    PLAYLIST = 5

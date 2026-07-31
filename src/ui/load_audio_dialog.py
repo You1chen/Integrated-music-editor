@@ -61,8 +61,7 @@ class LoadAudioDialog(QDialog):
             "音频文件 (*.mp3 *.flac *.wav *.ogg *.m4a *.aac *.wma *.opus);;所有文件 (*)",
         )
         if file_path:
-            if self._mw.config.get_remember_last_mp3():
-                self._mw.config.set_last_mp3_path(file_path)
+            self._mw.config.remember_mp3_path(file_path)
 
             url = QUrl.fromLocalFile(file_path).toString()
             self._mw.config.set_audio_src(url)

@@ -16,7 +16,7 @@ import os
 import re
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtGui import QFont, QKeyEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -51,6 +51,12 @@ from .synchronizer._translation_row import _TranslationRow
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
+
+
+def _mp3_to_lrc_path(mp3_path: str) -> str:
+    """Derive the matching .lrc path from an audio file path."""
+    stem = os.path.splitext(os.path.basename(mp3_path))[0]
+    return os.path.join(os.path.dirname(mp3_path), f"{stem}.lrc")
 
 
 class SynchronizerPage(QWidget):
@@ -136,6 +142,12 @@ class SynchronizerPage(QWidget):
         self._btn_pattern_match.clicked.connect(self._on_pattern_match)
         self._btn_pattern_match.hide()
         toolbar.addWidget(self._btn_pattern_match)
+
+        # New draft button
+        self._btn_new = QPushButton("新建")
+        self._btn_new.setToolTip("创建与当前音频同名的空白歌词草稿")
+        self._btn_new.clicked.connect(self._on_new_draft)
+        toolbar.addWidget(self._btn_new)
 
         # Import button
         self._btn_import = QPushButton("导入")
@@ -315,6 +327,21 @@ class SynchronizerPage(QWidget):
                 ),
             )
 
+    # ── New Draft ──────────────────────────────────────────
+
+    def _on_new_draft(self) -> None:
+        """Create a blank draft named after the currently loaded audio file."""
+        mp3_path = self._mw.audio_manager.local_path
+        if not mp3_path:
+            QMessageBox.information(self, "提示", "请先加载音频文件")
+            return
+
+        lrc_path = _mp3_to_lrc_path(mp3_path)
+
+        self._mw.lrc_state.init_from_text("", self._mw.trim_options)
+        self._mw.config.set_last_lrc_path(lrc_path)
+        self._mw.toast_overlay.show_toast("success", f"已创建新草稿：{os.path.basename(lrc_path)}")
+
     # ── Import / Export ─────────────────────────────────────
 
     def _on_import(self) -> None:
@@ -372,8 +399,7 @@ class SynchronizerPage(QWidget):
             "歌词文件 (*.lrc *.txt);;所有文件 (*)",
         )
         if file_path:
-            if self._mw.config.get_remember_last_lrc():
-                self._mw.config.set_last_lrc_path(file_path)
+            self._mw.config.remember_lrc_path(file_path)
 
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -396,9 +422,7 @@ class SynchronizerPage(QWidget):
             self._file_browser_import()
             return
 
-        audio_dir = os.path.dirname(mp3_path)
-        stem = os.path.splitext(os.path.basename(mp3_path))[0]
-        lrc_path = os.path.join(audio_dir, f"{stem}.lrc")
+        lrc_path = _mp3_to_lrc_path(mp3_path)
 
         # Same-name LRC next to MP3
         if os.path.exists(lrc_path):
@@ -412,8 +436,7 @@ class SynchronizerPage(QWidget):
                 with open(lrc_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
-                if self._mw.config.get_remember_last_lrc():
-                    self._mw.config.set_last_lrc_path(lrc_path)
+                self._mw.config.remember_lrc_path(lrc_path)
                 self._mw.toast_overlay.show_toast("success", "已加载同名歌词文件")
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"加载歌词文件失败：{e}")
@@ -471,6 +494,7 @@ class SynchronizerPage(QWidget):
             text = self._mw.lrc_state.stringify(self._mw.format_options)
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(text)
+            self._mw.config.remember_lrc_path(file_path)
             self._mw.toast_overlay.show_toast("success", "歌词已导出")
 
     def _on_edit_text(self) -> None:
@@ -507,7 +531,8 @@ class SynchronizerPage(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_text = text_edit.toPlainText()
             self._mw.lrc_state.init_from_text(new_text, self._mw.trim_options)
-            self._mw.toast_overlay.show_toast("success", "歌词已更新")
+            # Persist to disk via the same path as the toolbar save
+            self._do_save()
 
     def _on_preview(self) -> None:
         """Show a read-only preview of the LRC output."""
@@ -550,9 +575,20 @@ class SynchronizerPage(QWidget):
     def _do_save(self) -> None:
         """Overwrite the source LRC file (single implementation)."""
         text = self._mw.lrc_state.stringify(self._mw.format_options)
+        lrc_path = self._mw.config.get_last_lrc_path()
+        if not lrc_path:
+            # No source file yet — create one next to the currently
+            # loaded audio (use actual audio source, not persisted path)
+            mp3_path = self._mw.audio_manager.local_path
+            if mp3_path:
+                lrc_path = _mp3_to_lrc_path(mp3_path)
+                self._mw.config.set_last_lrc_path(lrc_path)
         ok, msg = self._mw.config.overwrite_lrc(text)
         if ok:
             self._mw.toast_overlay.show_toast("success", msg)
+            # Notify listeners (home page lyrics axis, etc.) to refresh
+            # from the current in-memory state — no file re-read needed.
+            self._mw.lrc_state.state_changed.emit()
         else:
             QMessageBox.warning(self, "错误", msg)
 
@@ -856,7 +892,6 @@ class SynchronizerPage(QWidget):
 
     def eventFilter(self, obj, event):
         """Detect clicks on empty space of the scroll area → deselect row."""
-        from PyQt6.QtCore import QEvent
         if obj == self._scroll.viewport() and event.type() == QEvent.Type.MouseButtonPress:
             pos = event.position().toPoint()
             child = self._scroll.viewport().childAt(pos)

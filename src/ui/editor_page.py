@@ -147,8 +147,7 @@ class EditorPage(QWidget):
         )
         if file_path:
             # Save last path if preference is enabled
-            if self._mw.config.get_remember_last_lrc():
-                self._mw.config.set_last_lrc_path(file_path)
+            self._mw.config.remember_lrc_path(file_path)
 
             try:
                 with open(file_path, "r", encoding="utf-8") as f:

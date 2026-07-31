@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog,
@@ -117,18 +117,11 @@ class HomePage(QWidget):
 
     # ── Audio path helper ────────────────────────────────────────
 
-    def _get_audio_path(self) -> str:
-        """Return the local file path of the currently loaded audio, or ''."""
-        src = self._mw.audio_manager.src
-        if not src:
-            return ""
-        return QUrl(src).toLocalFile()
-
     # ── Cover: load from audio file ──────────────────────────────
 
     def _load_cover(self) -> None:
         """Read embedded cover art from the audio file using mutagen."""
-        path = self._get_audio_path()
+        path = self._mw.audio_manager.local_path
         if not path or not os.path.isfile(path):
             self._show_placeholder()
             return

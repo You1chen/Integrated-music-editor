@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QRect, QUrl, Qt
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import (
     QColor, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap,
 )
@@ -614,16 +614,9 @@ class MetaEditorPage(QScrollArea):
 
     # ── Core logic ──────────────────────────────────────────────
 
-    def _get_audio_path(self) -> str:
-        """Return the local file path of the currently loaded audio, or ''."""
-        src = self._mw.audio_manager.src
-        if not src:
-            return ""
-        return QUrl(src).toLocalFile()
-
     def _refresh(self) -> None:
         """Re-read audio tags and populate the form."""
-        path = self._get_audio_path()
+        path = self._mw.audio_manager.local_path
         if not path or not os.path.isfile(path):
             self._editor.hide()
             self._no_audio_label.show()
@@ -943,7 +936,7 @@ class MetaEditorPage(QScrollArea):
 
     def _on_save(self) -> None:
         """Write all current form values to the audio file."""
-        path = self._get_audio_path()
+        path = self._mw.audio_manager.local_path
         if not path:
             self._mw.toast_overlay.show_toast("warning", "请先载入音频文件")
             return

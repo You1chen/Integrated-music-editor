@@ -19,6 +19,7 @@ from src.ui.editor_page import EditorPage
 from src.ui.synchronizer_page import SynchronizerPage
 from src.ui.preferences_page import PreferencesPage
 from src.ui.meta_editor_page import MetaEditorPage
+from src.ui.playlist_page import PlaylistPage
 from src.ui.audio_controls import AudioControls
 
 
@@ -62,6 +63,10 @@ def main() -> None:
     # Meta editor page (route 4) — edit audio file metadata (ID3 tags)
     meta_editor = MetaEditorPage(window)
     window.content_stack.register_page(PageRoute.META_EDITOR, meta_editor)
+
+    # Playlist page (route 5) — scan folders, browse songs
+    playlist = PlaylistPage(window)
+    window.content_stack.register_page(PageRoute.PLAYLIST, playlist)
 
     # ── Create Audio Controls and wire into footer ──────
     audio_controls = AudioControls(window)

@@ -6,6 +6,7 @@ pyqtSignals replacing the PubSub pattern.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from enum import IntEnum, auto
 from typing import Any, Optional
@@ -18,6 +19,8 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+
+from .lrc_parser import guard
 
 
 class AudioState(IntEnum):
@@ -74,6 +77,16 @@ class AudioManager(QObject):
     def src(self) -> str:
         """Get the current audio source URL."""
         return self._player.source().toString()
+
+    @property
+    def local_path(self) -> str:
+        """Get the current audio source as a local file path (empty if
+        no audio is loaded or the source is not a local file)."""
+        src = self.src
+        if not src:
+            return ""
+        path = QUrl(src).toLocalFile()
+        return path if path and os.path.isfile(path) else ""
 
     @property
     def duration(self) -> float:
@@ -226,12 +239,3 @@ class AudioManager(QObject):
         }
         msg = error_messages.get(error, error_string or "未知音频错误")
         self.error_occurred.emit(msg)
-
-
-def guard(value: float, min_val: float, max_val: float) -> float:
-    """Clamp a value between min and max."""
-    if value < min_val:
-        return min_val
-    if value > max_val:
-        return max_val
-    return value
