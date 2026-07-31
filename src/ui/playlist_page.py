@@ -1,4 +1,4 @@
-"""Playlist / media library page — scan folders, browse songs, load audio."""
+"""Playlist / media library page — scan folders, tree-browse songs, load audio."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from PyQt6.QtCore import (
     QUrl,
     pyqtSignal,
 )
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .content_stack import _CURRENT_THEME_COLOR, _CURRENT_DARK
+
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
@@ -33,11 +36,7 @@ if TYPE_CHECKING:
 
 
 class _ScanWorker(QThread):
-    """Scans directories recursively for .mp3 files in a background thread.
-
-    Follows the ``_ApiWorker`` pattern from ``_ai_assist.py``:
-    data in via constructor, results out via pyqtSignal.
-    """
+    """Scans directories recursively for .mp3 files in a background thread."""
 
     scan_finished = pyqtSignal(list)  # list[dict] — song entries
 
@@ -76,7 +75,6 @@ class _ScanWorker(QThread):
 
                     if tags is not None:
                         try:
-                            # ID3 (MP3)
                             from mutagen.id3 import ID3
                             if isinstance(tags, ID3):
                                 t = tags.get("TIT2")
@@ -86,7 +84,6 @@ class _ScanWorker(QThread):
                                 if a and a.text:
                                     artist = str(a.text[0])
                             else:
-                                # VorbisComment (FLAC, Ogg, …)
                                 title = _first(tags.get("title"))
                                 artist = _first(tags.get("artist"))
                         except Exception:
@@ -102,12 +99,8 @@ class _ScanWorker(QThread):
                     except Exception:
                         pass
 
-                    # Check for same-name .lrc
                     stem = os.path.splitext(full_path)[0]
                     has_lrc = os.path.isfile(stem + ".lrc")
-
-                    # Preserve existing liked state
-                    liked = False  # will be merged after scan
 
                     songs.append({
                         "path": full_path,
@@ -115,10 +108,9 @@ class _ScanWorker(QThread):
                         "artist": artist,
                         "duration": duration,
                         "has_lrc": has_lrc,
-                        "liked": liked,
+                        "liked": False,
                     })
 
-        # Sort: by directory then by title
         songs.sort(key=lambda s: (
             os.path.dirname(s["path"]).lower(),
             s["title"].lower(),
@@ -135,44 +127,72 @@ def _first(lst) -> str:
         return ""
 
 
+# ── Tree data node ────────────────────────────────────────────
+
+
+class _TreeNode:
+    """A node in the directory tree."""
+    __slots__ = ("name", "full_path", "children", "songs")
+
+    def __init__(self, name: str, full_path: str) -> None:
+        self.name = name
+        self.full_path = full_path
+        self.children: list[_TreeNode] = []
+        self.songs: list[dict] = []
+
+    def get_child(self, name: str) -> "_TreeNode | None":
+        for c in self.children:
+            if c.name == name:
+                return c
+        return None
+
+    def total_song_count(self) -> int:
+        """Count all songs in this subtree."""
+        n = len(self.songs)
+        for c in self.children:
+            n += c.total_song_count()
+        return n
+
+
 # ── Song row widget ───────────────────────────────────────────
 
 
 class _SongRow(QWidget):
-    """A single song row: title — artist | duration | ♡ like button."""
+    """A single song row with hover highlight."""
 
-    song_clicked = pyqtSignal(str)   # full path
-    like_toggled = pyqtSignal(str, bool)  # path, new liked state
+    song_clicked = pyqtSignal(str)
+    like_toggled = pyqtSignal(str, bool)
 
     def __init__(
         self,
         song: dict,
+        indent: int = 0,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._song = song
         self._liked = song.get("liked", False)
+        self._hover = False
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(24, 6, 16, 6)
+        layout.setContentsMargins(24 + indent * 20, 5, 16, 5)
         layout.setSpacing(8)
 
         # ── Title — Artist ──
         artist_str = f" — {song['artist']}" if song["artist"] else ""
-        title_label = QLabel(f"{song['title']}{artist_str}")
-        title_label.setSizePolicy(
+        self._title_label = QLabel(f"{song['title']}{artist_str}")
+        self._title_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        title_label.setStyleSheet("font-size: 14px;")
-        layout.addWidget(title_label)
+        layout.addWidget(self._title_label)
 
         # ── Has LRC indicator ──
         if song.get("has_lrc"):
             lrc_lbl = QLabel("📝")
             lrc_lbl.setToolTip("存在同名歌词文件")
-            lrc_lbl.setStyleSheet("font-size: 12px;")
             layout.addWidget(lrc_lbl)
 
         # ── Duration ──
@@ -185,7 +205,9 @@ class _SongRow(QWidget):
             dur_label = QLabel("--:--")
         dur_label.setStyleSheet("font-size: 13px; color: gray;")
         dur_label.setFixedWidth(48)
-        dur_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        dur_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         layout.addWidget(dur_label)
 
         # ── Like button ──
@@ -198,6 +220,8 @@ class _SongRow(QWidget):
         self._like_btn.clicked.connect(self._on_like)
         layout.addWidget(self._like_btn)
 
+        self._apply_bg()
+
     def _on_like(self) -> None:
         self._liked = not self._liked
         self._like_btn.setText("❤" if self._liked else "♡")
@@ -207,6 +231,27 @@ class _SongRow(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.song_clicked.emit(self._song["path"])
         super().mousePressEvent(event)
+
+    def enterEvent(self, event) -> None:
+        self._hover = True
+        self._apply_bg()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._hover = False
+        self._apply_bg()
+        super().leaveEvent(event)
+
+    def _apply_bg(self) -> None:
+        if self._hover:
+            theme = _CURRENT_THEME_COLOR
+            if _CURRENT_DARK:
+                bg = f"background-color: {theme}33; border-radius: 6px;"
+            else:
+                bg = f"background-color: {theme}22; border-radius: 6px;"
+        else:
+            bg = "background: transparent;"
+        self.setStyleSheet(f"_SongRow {{ {bg} }}")
 
     def matches(self, text: str) -> bool:
         """Check if this song matches a search filter (case-insensitive)."""
@@ -220,25 +265,25 @@ class _SongRow(QWidget):
         )
 
 
-# ── Folder group widget (collapsible) ─────────────────────────
+# ── Tree branch widget (collapsible directory node) ──────────
 
 
-class _FolderGroup(QWidget):
-    """A collapsible folder group header + song rows.
-
-    Follows the ``_CollapsibleGroup`` pattern from ``preferences_page.py``.
+class _TreeBranch(QWidget):
+    """A collapsible directory node — recursive: can contain
+    child _TreeBranch widgets and _SongRow widgets.
     """
 
     def __init__(
         self,
-        folder_path: str,
-        songs: list[dict],
+        node: _TreeNode,
+        depth: int = 0,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._folder_path = folder_path
-        self._songs = songs
-        self._expanded = True
+        self._node = node
+        self._depth = depth
+        self._expanded = False  # start collapsed
+        self._branches: list[_TreeBranch] = []
         self._song_rows: list[_SongRow] = []
 
         outer = QVBoxLayout(self)
@@ -246,20 +291,35 @@ class _FolderGroup(QWidget):
         outer.setSpacing(0)
 
         # ── Header button ──
-        count = len(songs)
-        self._header_btn = QPushButton(f"▼ 📁 {folder_path}  ({count}首)")
+        total = node.total_song_count()
+        indent_px = depth * 20
+        arrow = "▶"
+        self._header_btn = QPushButton(
+            f"{arrow} 📁 {node.name}  ({total}首)"
+        )
         self._header_btn.setObjectName("collapsibleHeader")
+        self._header_btn.setStyleSheet(
+            f"#collapsibleHeader {{ padding-left: {12 + indent_px}px; text-align: left; }}"
+        )
         self._header_btn.clicked.connect(self._toggle)
         outer.addWidget(self._header_btn)
 
         # ── Content area ──
         self._content = QWidget()
+        self._content.setVisible(False)  # start collapsed
         self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(0, 0, 0, 8)
+        self._content_layout.setContentsMargins(0, 0, 0, 4)
         self._content_layout.setSpacing(0)
 
-        for song in songs:
-            row = _SongRow(song)
+        # Child branches (subdirectories)
+        for child_node in sorted(node.children, key=lambda n: n.name.lower()):
+            branch = _TreeBranch(child_node, depth + 1)
+            self._branches.append(branch)
+            self._content_layout.addWidget(branch)
+
+        # Song rows at this level
+        for song in node.songs:
+            row = _SongRow(song, indent=depth + 1)
             self._song_rows.append(row)
             self._content_layout.addWidget(row)
 
@@ -268,38 +328,43 @@ class _FolderGroup(QWidget):
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         self._content.setVisible(self._expanded)
-        count = len(self._songs)
         arrow = "▼" if self._expanded else "▶"
-        self._header_btn.setText(f"{arrow} 📁 {self._folder_path}  ({count}首)")
+        total = self._node.total_song_count()
+        indent_px = self._depth * 20
+        self._header_btn.setText(
+            f"{arrow} 📁 {self._node.name}  ({total}首)"
+        )
+        self._header_btn.setStyleSheet(
+            f"#collapsibleHeader {{ padding-left: {12 + indent_px}px; text-align: left; }}"
+        )
+
+    def collect_rows(self) -> list[_SongRow]:
+        """Recursively collect all song rows in this subtree."""
+        rows = list(self._song_rows)
+        for b in self._branches:
+            rows.extend(b.collect_rows())
+        return rows
 
     def apply_filter(self, text: str) -> bool:
-        """Show/hide rows based on search text.
-
-        Returns True if at least one row is visible.
-        """
+        """Show/hide based on search. Returns True if anything is visible."""
         any_visible = False
         for row in self._song_rows:
-            visible = row.matches(text)
-            row.setVisible(visible)
-            if visible:
+            v = row.matches(text)
+            row.setVisible(v)
+            if v:
+                any_visible = True
+        for b in self._branches:
+            if b.apply_filter(text):
                 any_visible = True
         self.setVisible(any_visible)
         return any_visible
-
-    @property
-    def song_rows(self) -> list[_SongRow]:
-        return self._song_rows
 
 
 # ── Main playlist page ────────────────────────────────────────
 
 
 class PlaylistPage(QScrollArea):
-    """Media library page — scan folders, browse songs, click to load audio.
-
-    Follows the ``MetaEditorPage`` scrollable pattern:
-    QScrollArea → container QWidget → single QVBoxLayout.
-    """
+    """Media library page — scan folders, tree-browse songs, click to load audio."""
 
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__(main_window)
@@ -310,9 +375,10 @@ class PlaylistPage(QScrollArea):
 
         # ── State ──
         self._all_songs: list[dict] = []
-        self._groups: list[_FolderGroup] = []
+        self._branches: list[_TreeBranch] = []
         self._filter_text: str = ""
         self._search_timer: QTimer | None = None
+        self._root_dir: str = ""
 
         # ── Container ──
         container = QWidget()
@@ -346,7 +412,7 @@ class PlaylistPage(QScrollArea):
 
         # ── Content area (dynamic) ──
         self._content_layout = QVBoxLayout()
-        self._content_layout.setSpacing(6)
+        self._content_layout.setSpacing(2)
         self._layout.addLayout(self._content_layout)
 
         # ── Empty state ──
@@ -362,24 +428,13 @@ class PlaylistPage(QScrollArea):
         # ── Load cache on startup ──
         self._load_cache()
 
-    # ── Public: signal connection helpers ──
-
-    def connect_signals(self, groups: list[_FolderGroup]) -> None:
-        """Connect song_clicked → audio_manager.set_source and like_toggled → persist.
-
-        Called from main.py after page registration.
-        """
-        for group in groups:
-            for row in group.song_rows:
-                row.song_clicked.connect(self._on_song_clicked)
-                row.like_toggled.connect(self._on_like_toggled)
-
     # ── Cache ────────────────────────────────────────────────
 
     def _load_cache(self) -> None:
         cache = self._mw.config.get_playlist_cache()
         songs = cache.get("songs", [])
-        if songs:
+        self._root_dir = cache.get("root_dir", "")
+        if songs and self._root_dir:
             self._all_songs = songs
             self._rebuild_ui()
         else:
@@ -394,17 +449,19 @@ class PlaylistPage(QScrollArea):
         )
         if not folder:
             return
+        self._root_dir = folder
         self._start_scan([folder])
 
     def _on_rescan(self) -> None:
-        cache = self._mw.config.get_playlist_cache()
-        root_dirs = cache.get("root_dirs", [])
-        if not root_dirs:
+        if not self._root_dir:
+            cache = self._mw.config.get_playlist_cache()
+            self._root_dir = cache.get("root_dir", "")
+        if not self._root_dir:
             self._mw.toast_overlay.show_toast(
                 "warning", "请先选择文件夹再进行扫描"
             )
             return
-        self._start_scan(root_dirs)
+        self._start_scan([self._root_dir])
 
     def _start_scan(self, root_dirs: list[str]) -> None:
         self._mw.toast_overlay.show_toast("info", "正在扫描音乐文件...")
@@ -418,27 +475,18 @@ class PlaylistPage(QScrollArea):
     def _on_scan_finished(self, songs: list[dict]) -> None:
         # ── Merge liked state from existing cache ──
         old_cache = self._mw.config.get_playlist_cache()
-        old_songs: dict[str, bool] = {}
+        old_liked: set[str] = set()
         for s in old_cache.get("songs", []):
             if s.get("liked"):
-                old_songs[s["path"]] = True
+                old_liked.add(s["path"])
 
         for s in songs:
-            if s["path"] in old_songs:
+            if s["path"] in old_liked:
                 s["liked"] = True
-
-        # ── Determine root dirs ──
-        root_dirs = list({os.path.dirname(s["path"]) for s in songs})
-        # Try to find actual root: common prefix of all paths
-        if songs:
-            common = os.path.commonpath([s["path"] for s in songs])
-            # Walk up to an actual directory that was selected
-            # Heuristic: use the common prefix as root
-            root_dirs = [common]
 
         # ── Save cache ──
         cache = {
-            "root_dirs": root_dirs,
+            "root_dir": self._root_dir,
             "scanned_at": datetime.now().isoformat(timespec="seconds"),
             "songs": songs,
         }
@@ -453,43 +501,68 @@ class PlaylistPage(QScrollArea):
             "success", f"扫描完成，共 {len(songs)} 首"
         )
 
+    # ── Tree builder ──────────────────────────────────────────
+
+    def _build_tree(self) -> _TreeNode:
+        """Build a directory tree from the flat song list."""
+        root = _TreeNode(
+            os.path.basename(self._root_dir) or self._root_dir,
+            self._root_dir,
+        )
+
+        for song in self._all_songs:
+            try:
+                rel = os.path.relpath(song["path"], self._root_dir)
+            except ValueError:
+                # Different drive — put under root directly
+                root.songs.append(song)
+                continue
+            parts = rel.replace("\\", "/").split("/")
+            dir_parts = parts[:-1]  # directory components
+
+            node = root
+            for part in dir_parts:
+                if part == ".":
+                    continue
+                child = node.get_child(part)
+                if child is None:
+                    child_path = os.path.join(node.full_path, part)
+                    child = _TreeNode(part, child_path)
+                    node.children.append(child)
+                node = child
+            node.songs.append(song)
+
+        return root
+
     # ── UI rebuild ────────────────────────────────────────────
 
     def _rebuild_ui(self) -> None:
-        # ── Clear old content ──
         self._empty_label.setVisible(False)
-        for group in self._groups:
-            self._content_layout.removeWidget(group)
-            group.deleteLater()
-        self._groups.clear()
+        for branch in self._branches:
+            self._content_layout.removeWidget(branch)
+            branch.deleteLater()
+        self._branches.clear()
 
         if not self._all_songs:
             self._empty_label.setVisible(True)
             return
 
-        # ── Group songs by parent directory ──
-        groups: dict[str, list[dict]] = {}
-        for song in self._all_songs:
-            parent_dir = os.path.dirname(song["path"])
-            groups.setdefault(parent_dir, []).append(song)
+        tree = self._build_tree()
 
-        # ── Create FolderGroup widgets (sorted by folder name) ──
-        for folder in sorted(groups.keys(), key=str.lower):
-            group_widget = _FolderGroup(folder, groups[folder])
-            self._groups.append(group_widget)
-            self._content_layout.addWidget(group_widget)
+        # ── Create root branch ──
+        root_branch = _TreeBranch(tree, depth=0)
+        self._branches.append(root_branch)
+        self._content_layout.addWidget(root_branch)
 
-        # ── Connect signals ──
-        for group in self._groups:
-            for row in group.song_rows:
-                row.song_clicked.connect(self._on_song_clicked)
-                row.like_toggled.connect(self._on_like_toggled)
+        # ── Connect signals (recursively) ──
+        for row in root_branch.collect_rows():
+            row.song_clicked.connect(self._on_song_clicked)
+            row.like_toggled.connect(self._on_like_toggled)
 
-        # ── Apply current filter ──
         if self._filter_text:
             self._apply_filter(self._filter_text)
 
-    # ── Song click → load audio ───────────────────────────────
+    # ── Song click → load audio + auto-play ──────────────────
 
     def _on_song_clicked(self, path: str) -> None:
         if not os.path.isfile(path):
@@ -498,24 +571,44 @@ class PlaylistPage(QScrollArea):
         url = QUrl.fromLocalFile(path).toString()
         self._mw.audio_manager.set_source(url)
         self._mw.config.remember_mp3_path(path)
+
+        # Auto-play once the audio is loaded
+        try:
+            self._mw.audio_manager.duration_changed.disconnect(
+                self._on_duration_loaded_for_autoplay
+            )
+        except TypeError:
+            pass
+        self._mw.audio_manager.duration_changed.connect(
+            self._on_duration_loaded_for_autoplay
+        )
+
         name = os.path.basename(path)
         self._mw.toast_overlay.show_toast("success", f"已加载：{name}")
+
+    def _on_duration_loaded_for_autoplay(self, duration: float) -> None:
+        """One-shot handler: auto-play after song is loaded."""
+        try:
+            self._mw.audio_manager.duration_changed.disconnect(
+                self._on_duration_loaded_for_autoplay
+            )
+        except TypeError:
+            pass
+        if self._mw.audio_manager.paused:
+            self._mw.audio_manager.toggle()
 
     # ── Like toggle ───────────────────────────────────────────
 
     def _on_like_toggled(self, path: str, liked: bool) -> None:
-        # Update in-memory
         for s in self._all_songs:
             if s["path"] == path:
                 s["liked"] = liked
                 break
-        # Persist
         self._mw.config.toggle_playlist_like(path)
 
     # ── Search ────────────────────────────────────────────────
 
     def _on_search_text_changed(self, text: str) -> None:
-        # Debounce 300ms
         if self._search_timer is not None:
             self._search_timer.stop()
         self._search_timer = QTimer(self)
@@ -525,16 +618,16 @@ class PlaylistPage(QScrollArea):
 
     def _apply_filter(self, text: str) -> None:
         self._filter_text = text
-        for group in self._groups:
-            group.apply_filter(text)
+        for branch in self._branches:
+            branch.apply_filter(text)
 
     # ── showEvent ─────────────────────────────────────────────
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # Refresh if cache may have changed externally (e.g. liked state)
         cache = self._mw.config.get_playlist_cache()
         songs = cache.get("songs", [])
         if songs and not self._all_songs:
             self._all_songs = songs
+            self._root_dir = cache.get("root_dir", "")
             self._rebuild_ui()
