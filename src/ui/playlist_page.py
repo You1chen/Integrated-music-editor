@@ -664,6 +664,84 @@ class PlaylistPage(QScrollArea):
             self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
             self._do_apply_filter()
 
+    # ── Song refresh (called by MetaEditorPage after saving) ──
+
+    def refresh_song(self, old_path: str, new_path: str = "") -> None:
+        """Re-read a single file's metadata and update the playlist entry.
+
+        Called after metadata edits or file rename.  If *new_path* is
+        given (rename), the cache key is updated too.
+        """
+        actual = new_path or old_path
+        if not os.path.isfile(actual):
+            return
+
+        # ── Re-read metadata from file ──
+        try:
+            import mutagen
+            audio = mutagen.File(actual)
+        except Exception:
+            return
+
+        title = ""
+        artist = ""
+        duration = 0.0
+
+        tags = getattr(audio, "tags", None)
+        if tags is not None:
+            try:
+                from mutagen.id3 import ID3
+                if isinstance(tags, ID3):
+                    t = tags.get("TIT2")
+                    if t and t.text:
+                        title = str(t.text[0])
+                    a = tags.get("TPE1")
+                    if a and a.text:
+                        artist = str(a.text[0])
+                else:
+                    title = _first(tags.get("title"))
+                    artist = _first(tags.get("artist"))
+            except Exception:
+                pass
+
+        if not title:
+            title = os.path.splitext(os.path.basename(actual))[0]
+
+        try:
+            info = getattr(audio, "info", None)
+            if info is not None:
+                duration = round(info.length, 1)
+        except Exception:
+            pass
+
+        stem = os.path.splitext(actual)[0]
+        has_lrc = os.path.isfile(stem + ".lrc")
+
+        # ── Update in-memory list ──
+        for song in self._all_songs:
+            if os.path.normpath(song["path"]) == os.path.normpath(old_path):
+                song["path"] = actual
+                song["title"] = title
+                song["artist"] = artist
+                song["duration"] = duration
+                song["has_lrc"] = has_lrc
+                break
+
+        # ── Persist to cache JSON ──
+        cache = self._mw.config.get_playlist_cache()
+        for s in cache.get("songs", []):
+            if os.path.normpath(s["path"]) == os.path.normpath(old_path):
+                s["path"] = actual
+                s["title"] = title
+                s["artist"] = artist
+                s["duration"] = duration
+                s["has_lrc"] = has_lrc
+                break
+        self._mw.config.set_playlist_cache(cache)
+
+        # ── Refresh UI ──
+        self._rebuild_ui()
+
     # ── Search ────────────────────────────────────────────────
 
     def _on_search_text_changed(self, text: str) -> None:

@@ -943,6 +943,16 @@ class MetaEditorPage(QScrollArea):
             self._last_audio_path = ""  # force re-read
             self._refresh()
 
+    def _notify_playlist(self, old_path: str, new_path: str) -> None:
+        """Tell the playlist page to refresh a song's metadata."""
+        try:
+            from ..core.constants import PageRoute
+            playlist_page = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
+            if playlist_page is not None and hasattr(playlist_page, "refresh_song"):
+                playlist_page.refresh_song(old_path, new_path)
+        except Exception:
+            pass  # Best-effort, don't break save on playlist errors
+
     def _on_save(self) -> None:
         """Write all current form values to the audio file,
         and rename the file if the filename was changed."""
@@ -966,7 +976,9 @@ class MetaEditorPage(QScrollArea):
         old_dir = os.path.dirname(path)
         _stem, ext = os.path.splitext(os.path.basename(path))
         if new_stem == _stem:
-            return  # no rename needed
+            # Tags saved, no rename — still refresh playlist
+            self._notify_playlist(path, "")
+            return
 
         new_path = os.path.join(old_dir, new_stem + ext)
         if os.path.normpath(new_path) == os.path.normpath(path):
@@ -1007,6 +1019,9 @@ class MetaEditorPage(QScrollArea):
         self._mw.audio_manager.set_source(url)
         self._mw.config.remember_mp3_path(new_path)
         self._last_audio_path = new_path
+
+        # ── 4. Refresh playlist entry ──
+        self._notify_playlist(path, new_path)
 
         self._mw.toast_overlay.show_toast(
             "success", f"已重命名为：{new_stem}{ext}"
