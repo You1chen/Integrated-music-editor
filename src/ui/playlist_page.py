@@ -224,21 +224,39 @@ class _SongRow(QWidget):
         layout.addWidget(dur_label)
 
         # ── Like button ──
-        self._like_btn = QPushButton("❤" if self._liked else "♡")
-        self._like_btn.setFixedSize(28, 28)
+        self._like_btn = QPushButton()
+        self._like_btn.setFixedSize(30, 30)
         self._like_btn.setFlat(True)
-        self._like_btn.setStyleSheet(
-            "QPushButton { border: none; font-size: 16px; padding: 0; }"
-        )
+        self._like_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._like_btn.clicked.connect(self._on_like)
+        self._refresh_like_btn()
         layout.addWidget(self._like_btn)
 
         self._apply_bg()
 
     def _on_like(self) -> None:
         self._liked = not self._liked
-        self._like_btn.setText("❤" if self._liked else "♡")
+        self._refresh_like_btn()
         self.like_toggled.emit(self._song["path"], self._liked)
+
+    def _refresh_like_btn(self) -> None:
+        """Update like button appearance based on liked state."""
+        if self._liked:
+            self._like_btn.setText("❤")
+            self._like_btn.setToolTip("取消喜欢")
+            self._like_btn.setStyleSheet(
+                "QPushButton { border: none; font-size: 17px; padding: 0;"
+                " color: #e74c3c; }"
+                "QPushButton:hover { font-size: 20px; }"
+            )
+        else:
+            self._like_btn.setText("♡")
+            self._like_btn.setToolTip("喜欢")
+            self._like_btn.setStyleSheet(
+                "QPushButton { border: none; font-size: 17px; padding: 0;"
+                " color: #999999; }"
+                "QPushButton:hover { font-size: 20px; color: #e74c3c; }"
+            )
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -265,8 +283,10 @@ class _SongRow(QWidget):
         else:
             self.setStyleSheet("background: transparent;")
 
-    def matches(self, text: str) -> bool:
+    def matches(self, text: str, liked_only: bool = False) -> bool:
         """Check if this song matches a search filter (case-insensitive)."""
+        if liked_only and not self._liked:
+            return False
         if not text:
             return True
         lower = text.lower()
@@ -357,16 +377,17 @@ class _TreeBranch(QWidget):
             rows.extend(b.collect_rows())
         return rows
 
-    def apply_filter(self, text: str) -> bool:
-        """Show/hide based on search. Returns True if anything is visible."""
+    def apply_filter(self, text: str, liked_only: bool = False) -> bool:
+        """Show/hide based on search and liked-only filter.
+        Returns True if anything is visible."""
         any_visible = False
         for row in self._song_rows:
-            v = row.matches(text)
+            v = row.matches(text, liked_only)
             row.setVisible(v)
             if v:
                 any_visible = True
         for b in self._branches:
-            if b.apply_filter(text):
+            if b.apply_filter(text, liked_only):
                 any_visible = True
         self.setVisible(any_visible)
         return any_visible
@@ -389,6 +410,7 @@ class PlaylistPage(QScrollArea):
         self._all_songs: list[dict] = []
         self._branches: list[_TreeBranch] = []
         self._filter_text: str = ""
+        self._show_liked_only: bool = False
         self._search_timer: QTimer | None = None
         self._root_dir: str = ""
 
@@ -410,6 +432,13 @@ class PlaylistPage(QScrollArea):
         self._btn_rescan = QPushButton("重新扫描")
         self._btn_rescan.clicked.connect(self._on_rescan)
         toolbar.addWidget(self._btn_rescan)
+
+        # ── Liked-only filter toggle ──
+        self._btn_liked = QPushButton("♡ 喜欢")
+        self._btn_liked.setCheckable(True)
+        self._btn_liked.setToolTip("仅显示喜欢的歌曲")
+        self._btn_liked.toggled.connect(self._on_liked_filter_toggled)
+        toolbar.addWidget(self._btn_liked)
 
         toolbar.addStretch()
 
@@ -571,8 +600,8 @@ class PlaylistPage(QScrollArea):
             row.song_clicked.connect(self._on_song_clicked)
             row.like_toggled.connect(self._on_like_toggled)
 
-        if self._filter_text:
-            self._apply_filter(self._filter_text)
+        if self._filter_text or self._show_liked_only:
+            self._do_apply_filter()
 
     # ── Song click → load audio + auto-play ──────────────────
 
@@ -580,6 +609,18 @@ class PlaylistPage(QScrollArea):
         if not os.path.isfile(path):
             self._mw.toast_overlay.show_toast("warning", "文件不存在")
             return
+
+        # ── Same song → restart from beginning ──
+        current_path = self._mw.audio_manager.local_path
+        if current_path and os.path.normpath(current_path) == os.path.normpath(path):
+            self._mw.audio_manager.current_time = 0
+            if self._mw.audio_manager.paused:
+                self._mw.audio_manager.toggle()
+            name = os.path.basename(path)
+            self._mw.toast_overlay.show_toast("success", f"重新播放：{name}")
+            return
+
+        # ── Different song → load and auto-play ──
         url = QUrl.fromLocalFile(path).toString()
         self._mw.audio_manager.set_source(url)
         self._mw.config.remember_mp3_path(path)
@@ -617,6 +658,11 @@ class PlaylistPage(QScrollArea):
                 s["liked"] = liked
                 break
         self._mw.config.toggle_playlist_like(path)
+        # Refresh liked-only filter (hide song immediately if unliked)
+        if self._show_liked_only:
+            liked_count = sum(1 for s in self._all_songs if s.get("liked"))
+            self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
+            self._do_apply_filter()
 
     # ── Search ────────────────────────────────────────────────
 
@@ -630,8 +676,21 @@ class PlaylistPage(QScrollArea):
 
     def _apply_filter(self, text: str) -> None:
         self._filter_text = text
+        self._do_apply_filter()
+
+    def _on_liked_filter_toggled(self, checked: bool) -> None:
+        self._show_liked_only = checked
+        liked_count = sum(1 for s in self._all_songs if s.get("liked"))
+        if checked:
+            self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
+        else:
+            self._btn_liked.setText("♡ 喜欢")
+        self._do_apply_filter()
+
+    def _do_apply_filter(self) -> None:
+        """Apply both text search and liked-only filter to all branches."""
         for branch in self._branches:
-            branch.apply_filter(text)
+            branch.apply_filter(self._filter_text, self._show_liked_only)
 
     # ── showEvent ─────────────────────────────────────────────
 

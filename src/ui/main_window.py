@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
             InputAction.INCREASE_RATE,
             InputAction.DECREASE_RATE,
             InputAction.TOGGLE_PLAY,
+            InputAction.SYNC,
         ):
             if not self.audio_manager.src:
                 return False
@@ -322,6 +323,11 @@ class MainWindow(QMainWindow):
                 self.config.set_last_playback_rate(new_rate)
             return True
         elif action == InputAction.TOGGLE_PLAY:
+            self.audio_manager.toggle()
+            return True
+        elif action == InputAction.SYNC:
+            # Space → play/pause globally (overridden by timestamp
+            # when a lyric is selected on the synchronizer page)
             self.audio_manager.toggle()
             return True
         elif action == InputAction.SHOW_HELP:

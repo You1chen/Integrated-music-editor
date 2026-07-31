@@ -694,35 +694,7 @@ class SynchronizerPage(QWidget):
         state = self._mw.lrc_state
         audio = self._mw.audio_manager
 
-        if action == InputAction.SYNC:
-            # Space: toggle play/pause only when no line is selected
-            if state.select_index == -1:
-                event.accept()
-                audio.toggle()
-                return
-            # Line is selected → timestamp it
-            if audio.duration:
-                event.accept()
-                seek_time = self._get_sync_time()
-                state.next_(seek_time)
-                self._append_target_index = state.select_index
-                self._scroll_to_row(state.select_index)
-                # Auto-seek verify: jump back to the new timestamp after a delay
-                prefs = self._mw.config.get_preferences()
-                if prefs.get("autoSeekVerify", False):
-                    delay_ms = int(prefs.get("autoSeekDelay", 1.0) * 1000)
-
-                    def _seek_back() -> None:
-                        was_paused = audio.paused
-                        audio.current_time = seek_time
-                        # QMediaPlayer.setPosition may pause on some backends
-                        if not was_paused and audio.paused:
-                            audio.toggle()
-
-                    QTimer.singleShot(delay_ms, _seek_back)
-                return
-
-        elif action == InputAction.DELETE_TIME:
+        if action == InputAction.DELETE_TIME:
             event.accept()
             state.delete_time()
             return
