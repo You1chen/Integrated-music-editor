@@ -979,10 +979,18 @@ class MetaEditorPage(QScrollArea):
             )
             return
 
+        # ── Release file lock before renaming ──
+        self._mw.audio_manager._player.stop()
+        self._mw.audio_manager._player.setSource(QUrl())
+
         try:
             os.rename(path, new_path)
         except OSError as e:
             self._mw.toast_overlay.show_toast("warning", f"重命名失败：{e}")
+            # Re-load original file
+            self._mw.audio_manager.set_source(
+                QUrl.fromLocalFile(path).toString()
+            )
             return
 
         # ── Also rename matching .lrc file if it exists ──
