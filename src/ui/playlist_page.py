@@ -195,33 +195,27 @@ class _SongRow(QWidget):
         layout.setSpacing(8)
 
         # ── Title — Artist ──
-        artist_str = f" — {song['artist']}" if song["artist"] else ""
-        self._title_label = QLabel(f"{song['title']}{artist_str}")
+        self._title_label = QLabel()
         self._title_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         layout.addWidget(self._title_label)
 
         # ── Has LRC indicator ──
-        if song.get("has_lrc"):
-            lrc_lbl = QLabel("📝")
-            lrc_lbl.setToolTip("存在同名歌词文件")
-            layout.addWidget(lrc_lbl)
+        self._lrc_label = QLabel()
+        self._lrc_label.setToolTip("存在同名歌词文件")
+        layout.addWidget(self._lrc_label)
 
         # ── Duration ──
-        dur = song.get("duration", 0)
-        if dur > 0:
-            mins = int(dur // 60)
-            secs = int(dur % 60)
-            dur_label = QLabel(f"{mins}:{secs:02d}")
-        else:
-            dur_label = QLabel("--:--")
-        dur_label.setStyleSheet("font-size: 13px; color: gray;")
-        dur_label.setFixedWidth(48)
-        dur_label.setAlignment(
+        self._dur_label = QLabel()
+        self._dur_label.setStyleSheet("font-size: 13px; color: gray;")
+        self._dur_label.setFixedWidth(48)
+        self._dur_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        layout.addWidget(dur_label)
+        layout.addWidget(self._dur_label)
+
+        self._refresh_labels()
 
         # ── Like button ──
         self._like_btn = QPushButton()
@@ -282,6 +276,30 @@ class _SongRow(QWidget):
             )
         else:
             self.setStyleSheet("background: transparent;")
+
+    def _refresh_labels(self) -> None:
+        """Update all labels from the current song data."""
+        s = self._song
+        artist_str = f" — {s['artist']}" if s["artist"] else ""
+        self._title_label.setText(f"{s['title']}{artist_str}")
+
+        self._lrc_label.setText("📝" if s.get("has_lrc") else "")
+        self._lrc_label.setVisible(bool(s.get("has_lrc")))
+
+        dur = s.get("duration", 0)
+        if dur > 0:
+            mins = int(dur // 60)
+            secs = int(dur % 60)
+            self._dur_label.setText(f"{mins}:{secs:02d}")
+        else:
+            self._dur_label.setText("--:--")
+
+    def update_song(self, song: dict) -> None:
+        """Replace backing data and refresh display in-place."""
+        self._song = song
+        self._liked = song.get("liked", False)
+        self._refresh_labels()
+        self._refresh_like_btn()
 
     def matches(self, text: str, liked_only: bool = False) -> bool:
         """Check if this song matches a search filter (case-insensitive)."""
@@ -718,6 +736,7 @@ class PlaylistPage(QScrollArea):
         has_lrc = os.path.isfile(stem + ".lrc")
 
         # ── Update in-memory list ──
+        updated_song = None
         for song in self._all_songs:
             if os.path.normpath(song["path"]) == os.path.normpath(old_path):
                 song["path"] = actual
@@ -725,6 +744,7 @@ class PlaylistPage(QScrollArea):
                 song["artist"] = artist
                 song["duration"] = duration
                 song["has_lrc"] = has_lrc
+                updated_song = song
                 break
 
         # ── Persist to cache JSON ──
@@ -739,8 +759,13 @@ class PlaylistPage(QScrollArea):
                 break
         self._mw.config.set_playlist_cache(cache)
 
-        # ── Refresh UI ──
-        self._rebuild_ui()
+        # ── In-place update the widget (no full rebuild) ──
+        if updated_song is not None:
+            for branch in self._branches:
+                for row in branch.collect_rows():
+                    if os.path.normpath(row._song["path"]) == os.path.normpath(old_path):
+                        row.update_song(updated_song)
+                        return
 
     # ── Search ────────────────────────────────────────────────
 
