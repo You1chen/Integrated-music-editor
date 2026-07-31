@@ -376,9 +376,15 @@ class _TreeBranch(QWidget):
         outer.addWidget(self._content)
 
     def _toggle(self) -> None:
-        self._expanded = not self._expanded
-        self._content.setVisible(self._expanded)
-        arrow = "▼" if self._expanded else "▶"
+        self._set_expanded(not self._expanded)
+
+    def _set_expanded(self, expanded: bool) -> None:
+        """Set expansion state programmatically (no toggle side-effects)."""
+        if self._expanded == expanded:
+            return
+        self._expanded = expanded
+        self._content.setVisible(expanded)
+        arrow = "▼" if expanded else "▶"
         total = self._node.total_song_count()
         indent_px = self._depth * 20
         self._header_btn.setText(
@@ -388,6 +394,20 @@ class _TreeBranch(QWidget):
             f"#collapsibleHeader {{ padding-left: {12 + indent_px}px; text-align: left; }}"
         )
 
+    def snapshot_expanded(self) -> dict[str, bool]:
+        """Capture the current expansion state of this subtree."""
+        snap = {self._node.full_path: self._expanded}
+        for b in self._branches:
+            snap.update(b.snapshot_expanded())
+        return snap
+
+    def restore_expanded(self, snap: dict[str, bool]) -> None:
+        """Restore expansion state from a previous snapshot."""
+        if self._node.full_path in snap:
+            self._set_expanded(snap[self._node.full_path])
+        for b in self._branches:
+            b.restore_expanded(snap)
+
     def collect_rows(self) -> list[_SongRow]:
         """Recursively collect all song rows in this subtree."""
         rows = list(self._song_rows)
@@ -395,8 +415,11 @@ class _TreeBranch(QWidget):
             rows.extend(b.collect_rows())
         return rows
 
-    def apply_filter(self, text: str, liked_only: bool = False) -> bool:
+    def apply_filter(self, text: str, liked_only: bool = False,
+                      expand_matches: bool = False) -> bool:
         """Show/hide based on search and liked-only filter.
+        When *expand_matches* is True, auto-expand branches that contain
+        visible rows so the user can see matching songs immediately.
         Returns True if anything is visible."""
         any_visible = False
         for row in self._song_rows:
@@ -405,8 +428,10 @@ class _TreeBranch(QWidget):
             if v:
                 any_visible = True
         for b in self._branches:
-            if b.apply_filter(text, liked_only):
+            if b.apply_filter(text, liked_only, expand_matches):
                 any_visible = True
+        if expand_matches and any_visible:
+            self._set_expanded(True)
         self.setVisible(any_visible)
         return any_visible
 
@@ -429,6 +454,7 @@ class PlaylistPage(QScrollArea):
         self._branches: list[_TreeBranch] = []
         self._filter_text: str = ""
         self._show_liked_only: bool = False
+        self._saved_expanded: dict[str, bool] | None = None
         self._search_timer: QTimer | None = None
         self._root_dir: str = ""
 
@@ -605,6 +631,9 @@ class PlaylistPage(QScrollArea):
         if not self._all_songs:
             self._empty_label.setVisible(True)
             return
+
+        # Invalidate saved expansion snapshot (tree was rebuilt)
+        self._saved_expanded = None
 
         tree = self._build_tree()
 
@@ -791,9 +820,26 @@ class PlaylistPage(QScrollArea):
         self._do_apply_filter()
 
     def _do_apply_filter(self) -> None:
-        """Apply both text search and liked-only filter to all branches."""
+        """Apply both text search and liked-only filter to all branches.
+        Snapshot expansion state before the first filter, restore when
+        the filter is cleared, and auto-expand matching paths in between."""
+        active = bool(self._filter_text) or self._show_liked_only
+
+        if active and self._saved_expanded is None:
+            # Snapshot user's manual expansion state before filtering
+            self._saved_expanded = {}
+            for branch in self._branches:
+                self._saved_expanded.update(branch.snapshot_expanded())
+
         for branch in self._branches:
-            branch.apply_filter(self._filter_text, self._show_liked_only)
+            branch.apply_filter(self._filter_text, self._show_liked_only,
+                                expand_matches=active)
+
+        if not active and self._saved_expanded is not None:
+            # Filter cleared — restore original expansion state
+            for branch in self._branches:
+                branch.restore_expanded(self._saved_expanded)
+            self._saved_expanded = None
 
     # ── showEvent ─────────────────────────────────────────────
 
