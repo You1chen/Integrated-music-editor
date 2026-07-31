@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QRect, Qt, QUrl
 from PyQt6.QtGui import (
     QColor, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap,
 )
@@ -582,6 +582,11 @@ class MetaEditorPage(QScrollArea):
         text_form = QFormLayout(text_group)
         text_form.setSpacing(6)
 
+        # ── Filename editor ──
+        self._filename_input = QLineEdit()
+        self._filename_input.setPlaceholderText("重命名音频文件（不含扩展名）")
+        text_form.addRow("文件名:", self._filename_input)
+
         self._inputs: dict[str, QLineEdit] = {}
         for key, label, placeholder in _TEXT_FIELDS:
             inp = QLineEdit()
@@ -630,6 +635,10 @@ class MetaEditorPage(QScrollArea):
         if path == self._last_audio_path:
             return
         self._last_audio_path = path
+
+        # ── Populate filename (stem only, no extension) ──
+        stem, _ = os.path.splitext(os.path.basename(path))
+        self._filename_input.setText(stem)
 
         self._load_from_audio(path)
 
@@ -935,12 +944,65 @@ class MetaEditorPage(QScrollArea):
             self._refresh()
 
     def _on_save(self) -> None:
-        """Write all current form values to the audio file."""
+        """Write all current form values to the audio file,
+        and rename the file if the filename was changed."""
         path = self._mw.audio_manager.local_path
         if not path:
             self._mw.toast_overlay.show_toast("warning", "请先载入音频文件")
             return
+
+        # ── Validate filename before saving ──
+        new_stem = self._filename_input.text().strip()
+        if not new_stem:
+            self._mw.toast_overlay.show_toast(
+                "warning", "文件名不能为空"
+            )
+            return
+
+        # ── 1. Save metadata tags ──
         self._save_to_audio(path)
+
+        # ── 2. Rename file if filename changed ──
+        old_dir = os.path.dirname(path)
+        _stem, ext = os.path.splitext(os.path.basename(path))
+        if new_stem == _stem:
+            return  # no rename needed
+
+        new_path = os.path.join(old_dir, new_stem + ext)
+        if os.path.normpath(new_path) == os.path.normpath(path):
+            return  # same file (case-only change on Windows)
+
+        if os.path.exists(new_path):
+            self._mw.toast_overlay.show_toast(
+                "warning",
+                f"目标文件已存在：{new_stem}{ext}",
+            )
+            return
+
+        try:
+            os.rename(path, new_path)
+        except OSError as e:
+            self._mw.toast_overlay.show_toast("warning", f"重命名失败：{e}")
+            return
+
+        # ── Also rename matching .lrc file if it exists ──
+        old_lrc = os.path.splitext(path)[0] + ".lrc"
+        if os.path.isfile(old_lrc):
+            new_lrc = os.path.join(old_dir, new_stem + ".lrc")
+            try:
+                os.rename(old_lrc, new_lrc)
+            except OSError:
+                pass  # LRC rename is best-effort
+
+        # ── 3. Reload audio from new path ──
+        url = QUrl.fromLocalFile(new_path).toString()
+        self._mw.audio_manager.set_source(url)
+        self._mw.config.remember_mp3_path(new_path)
+        self._last_audio_path = new_path
+
+        self._mw.toast_overlay.show_toast(
+            "success", f"已重命名为：{new_stem}{ext}"
+        )
 
 
 # ── mutagen helper functions ─────────────────────────────────────
