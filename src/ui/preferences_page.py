@@ -120,10 +120,13 @@ class PreferencesPage(QScrollArea):
         about = _CollapsibleGroup("关于")
         about_layout = QFormLayout()
         about_layout.addRow("版本：", QLabel("6.0.0 (Python)"))
-        about_layout.addRow(
-            "项目地址：",
-            QLabel('<a href="https://github.com/magic-akari/lrc-maker">GitHub</a>'),
+        gh_link = QLabel(
+            '<a href="https://github.com/You1chen/Integrated-music-editor">'
+            "GitHub</a>"
         )
+        gh_link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        gh_link.setOpenExternalLinks(True)
+        about_layout.addRow("项目地址：", gh_link)
         about.set_content_layout(about_layout)
         layout.addWidget(about)
 
@@ -205,11 +208,6 @@ class PreferencesPage(QScrollArea):
         self._space_btn_cb.setChecked(prefs.get("screenButton", False))
         self._space_btn_cb.toggled.connect(self._on_toggle_changed)
         display_layout.addRow("启用虚拟空格键:", self._space_btn_cb)
-
-        self._builtin_audio_cb = QCheckBox()
-        self._builtin_audio_cb.setChecked(prefs.get("builtInAudio", False))
-        self._builtin_audio_cb.toggled.connect(self._on_toggle_changed)
-        display_layout.addRow("使用内置音频播放器:", self._builtin_audio_cb)
 
         self._show_welcome_cb = QCheckBox()
         self._show_welcome_cb.setChecked(self._mw.config.get_show_welcome())
@@ -293,13 +291,6 @@ class PreferencesPage(QScrollArea):
         self._show_save_warning_cb.toggled.connect(self._on_toggle_changed)
         file_memory_layout.addRow(
             "保存时显示覆盖警告:", self._show_save_warning_cb
-        )
-
-        self._show_draft_warning_cb = QCheckBox()
-        self._show_draft_warning_cb.setChecked(self._mw.config.get_show_draft_warning())
-        self._show_draft_warning_cb.toggled.connect(self._on_toggle_changed)
-        file_memory_layout.addRow(
-            "关闭/导入时显示覆写警告:", self._show_draft_warning_cb
         )
 
         self._enable_smart_import_cb = QCheckBox()
@@ -602,7 +593,6 @@ class PreferencesPage(QScrollArea):
         prefs = self._mw.config.get_preferences()
         prefs["showWaveform"] = self._show_waveform_cb.isChecked()
         prefs["screenButton"] = self._space_btn_cb.isChecked()
-        prefs["builtInAudio"] = self._builtin_audio_cb.isChecked()
         prefs["fixed"] = self._fixed_combo.currentData()
         prefs["spaceStart"] = self._space_start.value()
         prefs["spaceEnd"] = self._space_end.value()
@@ -617,7 +607,6 @@ class PreferencesPage(QScrollArea):
         prefs["rememberPlaybackRate"] = self._remember_rate_cb.isChecked()
         prefs["showWelcome"] = self._show_welcome_cb.isChecked()
         prefs["showSaveWarning"] = self._show_save_warning_cb.isChecked()
-        prefs["showDraftWarning"] = self._show_draft_warning_cb.isChecked()
         prefs["enableSmartImport"] = self._enable_smart_import_cb.isChecked()
         prefs["reactionTimeMs"] = self._reaction_time.value()
         prefs["autoSeekVerify"] = self._auto_seek_cb.isChecked()

@@ -149,9 +149,6 @@ class ConfigManager:
         """Whether to show the welcome/guide dialog on startup."""
         return self.get_preferences().get("showWelcome", True)
 
-    def get_show_draft_warning(self) -> bool:
-        return self.get_preferences().get("showDraftWarning", True)
-
     def get_enable_smart_import(self) -> bool:
         return self.get_preferences().get("enableSmartImport", True)
 
