@@ -23,6 +23,7 @@ from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -30,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 import mutagen
-from mutagen.id3 import ID3
+from mutagen.id3 import APIC, ID3
 
 from .lyric_axis_widget import LyricAxisWidget
 
@@ -186,6 +187,100 @@ class HomePage(QWidget):
             return
 
         self._update_cover_icon()
+
+        # 主页导入的封面默认只保存在内存中（编辑元信息页有"保存到音频文件"
+        # 按钮才真正写入磁盘）。为避免两页不同步，这里弹窗询问是否落盘。
+        reply = QMessageBox.question(
+            self,
+            "保存封面",
+            "是否将封面保存到音频文件？\n"
+            "（若不保存，封面仅在本页显示，重新加载音频后会消失）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._save_cover_to_audio()
+
+    def _save_cover_to_audio(self) -> None:
+        """Write the in-memory cover to the audio file (keep other tags).
+
+        Mirrors the cover-writing logic of ``MetaEditorPage._save_to_audio``
+        so the two pages stay in sync.
+        """
+        path = self._mw.audio_manager.local_path
+        if not path or not os.path.isfile(path):
+            self._mw.toast_overlay.show_toast("warning", "无法保存封面：音频文件不存在")
+            return
+
+        try:
+            audio = mutagen.File(path)
+        except Exception:
+            self._mw.toast_overlay.show_toast("warning", "无法写入音频文件")
+            return
+
+        if audio is None:
+            self._mw.toast_overlay.show_toast("warning", "不支持的音频格式，无法写入封面")
+            return
+
+        try:
+            # Ensure tags exist (files without any existing tags)
+            tags = getattr(audio, "tags", None)
+            if tags is None:
+                try:
+                    audio.add_tags()
+                    tags = audio.tags
+                except Exception:
+                    self._mw.toast_overlay.show_toast("warning", "无法为此文件创建标签")
+                    return
+
+            # ── ID3 (MP3) ──────────────────────────────────────
+            if isinstance(tags, ID3):
+                tags.delall("APIC")
+                tags.add(
+                    APIC(
+                        encoding=3,
+                        mime=self._cover_mime,
+                        type=3,          # Cover (front)
+                        desc="cover",
+                        data=self._cover_data,
+                    )
+                )
+                audio.save()
+                self._after_cover_saved()
+                return
+
+            # ── FLAC / Ogg native pictures ─────────────────────
+            if hasattr(audio, "clear_pictures") and hasattr(audio, "add_picture"):
+                from mutagen.flac import Picture
+                pic = Picture()
+                pic.type = 3          # Cover (front)
+                pic.mime = self._cover_mime
+                pic.desc = "cover"
+                pic.data = self._cover_data
+                audio.clear_pictures()
+                audio.add_picture(pic)
+                audio.save()
+                self._after_cover_saved()
+                return
+
+            self._mw.toast_overlay.show_toast("warning", "该格式不支持写入封面")
+        except Exception:
+            self._mw.toast_overlay.show_toast("warning", "保存封面失败")
+
+    def _after_cover_saved(self) -> None:
+        """Toast success and force the meta editor to re-read the file."""
+        self._mw.toast_overlay.show_toast("success", "封面已保存到音频文件")
+
+        # MetaEditorPage caches the audio path and skips re-reading on
+        # showEvent when unchanged — invalidate the cache so the new
+        # cover is picked up the next time that page is visited.
+        try:
+            from ..core.constants import PageRoute
+            meta_page = self._mw.content_stack._pages.get(PageRoute.META_EDITOR)
+            if meta_page is not None and hasattr(meta_page, "_last_audio_path"):
+                meta_page._last_audio_path = ""
+        except Exception:
+            pass  # Best-effort — never break the cover save
 
     # ── Cover: icon rendering ────────────────────────────────────
 
