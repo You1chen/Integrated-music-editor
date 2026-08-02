@@ -495,11 +495,13 @@ class MainWindow(QMainWindow):
     # ── Public Helpers ──────────────────────────────────────
 
     def _show_welcome_dialog(self) -> None:
-        """Show the welcome guide on startup (one-shot, can be disabled).
+        """Show the welcome guide (non-modal, one-shot, closable).
 
-        Reflects the app's current position: an integrated tool that
-        combines audio playback, lyric timing/editing, translation,
-        metadata editing and a playlist/media library.
+        Deliberately **non-modal**: a modal ``exec()`` disables the main
+        window on Windows, which leaves ghost shadows / duplicated-text
+        artifacts behind while the dialog is up (parts of the disabled
+        window never repaint).  A modeless top-level dialog lets the
+        main window keep rendering normally, so no artifacts appear.
         """
         from PyQt6.QtWidgets import (
             QCheckBox,
@@ -510,9 +512,18 @@ class MainWindow(QMainWindow):
             QVBoxLayout as QVBL,
         )
 
-        dlg = QDialog(self)
+        # Top-level dialog with NO parent → never disables the main window.
+        dlg = QDialog()
         dlg.setWindowTitle("欢迎使用集成歌曲编辑器")
+        dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.setMinimumSize(480, 440)
+        dlg.resize(520, 480)
+
+        # Center over the main window
+        dlg.move(
+            self.frameGeometry().center() - dlg.rect().center()
+        )
 
         lay = QVBL(dlg)
         lay.setContentsMargins(28, 24, 28, 16)
@@ -555,7 +566,7 @@ class MainWindow(QMainWindow):
         )
         btn_sync.clicked.connect(lambda: (
             self.content_stack.set_page(PageRoute.SYNCHRONIZER),
-            dlg.accept(),
+            dlg.close(),
         ))
         lay.addWidget(btn_sync, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -568,33 +579,17 @@ class MainWindow(QMainWindow):
 
         # ── Close button ──
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        btns.rejected.connect(dlg.reject)
+        btns.rejected.connect(dlg.close)
         lay.addWidget(btns)
 
-        # ── Render-artifact guard ──
-        # The modal exec() disables the main window; on Windows, parts of
-        # a disabled window can be left unrepainted (ghost "shadow" +
-        # duplicated text).  Hide the always-on-top toast overlay first
-        # (it floats at a fixed position, unaffected by the dialog), flush
-        # pending paints, and force a full redraw after the dialog closes.
-        toast_was_visible = self.toast_overlay.isVisible()
-        self.toast_overlay.hide()
-        QApplication.processEvents()
-        self.repaint()
+        # Persist "don't show again" when the dialog is dismissed.
+        dlg.finished.connect(lambda _: self._on_welcome_closed(cb.isChecked()))
 
-        dlg.exec()
+        dlg.show()
 
-        # Restore toast visibility if it still has queued items
-        if toast_was_visible and self.toast_overlay._toasts:
-            self.toast_overlay.show()
-
-        # Force full redraw to clear any stale pixels
-        self.update()
-        self.content_stack.update()
-        self.footer_bar.update()
-
-        # Persist preference
-        if cb.isChecked():
+    def _on_welcome_closed(self, checked: bool) -> None:
+        """Persist the welcome-skip preference after the dialog closes."""
+        if checked:
             prefs = self.config.get_preferences()
             prefs["showWelcome"] = False
             self.config.set_preferences(prefs)
