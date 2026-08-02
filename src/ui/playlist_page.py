@@ -63,8 +63,16 @@ class _ScanWorker(QThread):
                     except Exception:
                         continue
 
+                    # ── Extract tags ──
                     title = ""
                     artist = ""
+                    album = ""
+                    albumartist = ""
+                    lyricist = ""
+                    composer = ""
+                    year = ""
+                    genre = ""
+                    comment = ""
                     duration = 0.0
 
                     try:
@@ -82,9 +90,23 @@ class _ScanWorker(QThread):
                                 a = tags.get("TPE1")
                                 if a and a.text:
                                     artist = str(a.text[0])
+                                album = _id3_tag_text(tags, "TALB")
+                                albumartist = _id3_tag_text(tags, "TPE2")
+                                lyricist = _id3_tag_text(tags, "TEXT")
+                                composer = _id3_tag_text(tags, "TCOM")
+                                year = _id3_tag_text(tags, "TDRC") or _id3_tag_text(tags, "TYER")
+                                genre = _id3_tag_text(tags, "TCON")
+                                comment = _id3_comment_text(tags)
                             else:
                                 title = _first(tags.get("title"))
                                 artist = _first(tags.get("artist"))
+                                album = _first(tags.get("album"))
+                                albumartist = _first(tags.get("albumartist"))
+                                lyricist = _first(tags.get("lyricist"))
+                                composer = _first(tags.get("composer"))
+                                year = _first(tags.get("date")) or _first(tags.get("year"))
+                                genre = _first(tags.get("genre"))
+                                comment = _first(tags.get("comment")) or _first(tags.get("description"))
                         except Exception:
                             pass
 
@@ -105,6 +127,13 @@ class _ScanWorker(QThread):
                         "path": full_path,
                         "title": title,
                         "artist": artist,
+                        "album": album,
+                        "albumartist": albumartist,
+                        "lyricist": lyricist,
+                        "composer": composer,
+                        "year": year,
+                        "genre": genre,
+                        "comment": comment,
                         "duration": duration,
                         "has_lrc": has_lrc,
                         "liked": False,
@@ -124,6 +153,30 @@ def _first(lst) -> str:
         return str(lst[0]) if lst else ""
     except (IndexError, TypeError):
         return ""
+
+
+def _id3_tag_text(tags, frame_name: str) -> str:
+    """Get the first text value from an ID3 frame by name (e.g. 'TALB')."""
+    try:
+        frame = tags.get(frame_name)
+        if frame is not None and frame.text:
+            return str(frame.text[0])
+    except Exception:
+        pass
+    return ""
+
+
+def _id3_comment_text(tags) -> str:
+    """Get the first COMM frame's text, or ''."""
+    try:
+        for key in tags:
+            if key.startswith("COMM"):
+                frame = tags[key]
+                if frame.text:
+                    return str(frame.text[0])
+    except Exception:
+        pass
+    return ""
 
 
 def _migrate_root_dir(cache: dict) -> str:
@@ -302,17 +355,29 @@ class _SongRow(QWidget):
         self._refresh_like_btn()
 
     def matches(self, text: str, liked_only: bool = False) -> bool:
-        """Check if this song matches a search filter (case-insensitive)."""
+        """Check if this song matches a search filter (case-insensitive).
+
+        Searches all metadata fields: path, title, artist, album,
+        albumartist, lyricist, composer, year, genre, comment.
+        """
         if liked_only and not self._liked:
             return False
         if not text:
             return True
         lower = text.lower()
-        return (
-            lower in self._song["path"].lower()
-            or lower in self._song["title"].lower()
-            or lower in self._song["artist"].lower()
-        )
+        haystack = [
+            self._song.get("path", ""),
+            self._song.get("title", ""),
+            self._song.get("artist", ""),
+            self._song.get("album", ""),
+            self._song.get("albumartist", ""),
+            self._song.get("lyricist", ""),
+            self._song.get("composer", ""),
+            self._song.get("year", ""),
+            self._song.get("genre", ""),
+            self._song.get("comment", ""),
+        ]
+        return any(lower in h.lower() for h in haystack if h)
 
 
 # ── Tree branch widget (collapsible directory node) ──────────
@@ -730,8 +795,16 @@ class PlaylistPage(QScrollArea):
         except Exception:
             return
 
+        # ── Extract all tags (mirrors _ScanWorker) ──
         title = ""
         artist = ""
+        album = ""
+        albumartist = ""
+        lyricist = ""
+        composer = ""
+        year = ""
+        genre = ""
+        comment = ""
         duration = 0.0
 
         tags = getattr(audio, "tags", None)
@@ -745,9 +818,23 @@ class PlaylistPage(QScrollArea):
                     a = tags.get("TPE1")
                     if a and a.text:
                         artist = str(a.text[0])
+                    album = _id3_tag_text(tags, "TALB")
+                    albumartist = _id3_tag_text(tags, "TPE2")
+                    lyricist = _id3_tag_text(tags, "TEXT")
+                    composer = _id3_tag_text(tags, "TCOM")
+                    year = _id3_tag_text(tags, "TDRC") or _id3_tag_text(tags, "TYER")
+                    genre = _id3_tag_text(tags, "TCON")
+                    comment = _id3_comment_text(tags)
                 else:
                     title = _first(tags.get("title"))
                     artist = _first(tags.get("artist"))
+                    album = _first(tags.get("album"))
+                    albumartist = _first(tags.get("albumartist"))
+                    lyricist = _first(tags.get("lyricist"))
+                    composer = _first(tags.get("composer"))
+                    year = _first(tags.get("date")) or _first(tags.get("year"))
+                    genre = _first(tags.get("genre"))
+                    comment = _first(tags.get("comment")) or _first(tags.get("description"))
             except Exception:
                 pass
 
@@ -771,6 +858,13 @@ class PlaylistPage(QScrollArea):
                 song["path"] = actual
                 song["title"] = title
                 song["artist"] = artist
+                song["album"] = album
+                song["albumartist"] = albumartist
+                song["lyricist"] = lyricist
+                song["composer"] = composer
+                song["year"] = year
+                song["genre"] = genre
+                song["comment"] = comment
                 song["duration"] = duration
                 song["has_lrc"] = has_lrc
                 updated_song = song
@@ -783,6 +877,13 @@ class PlaylistPage(QScrollArea):
                 s["path"] = actual
                 s["title"] = title
                 s["artist"] = artist
+                s["album"] = album
+                s["albumartist"] = albumartist
+                s["lyricist"] = lyricist
+                s["composer"] = composer
+                s["year"] = year
+                s["genre"] = genre
+                s["comment"] = comment
                 s["duration"] = duration
                 s["has_lrc"] = has_lrc
                 break
