@@ -497,8 +497,9 @@ class MainWindow(QMainWindow):
     def _show_welcome_dialog(self) -> None:
         """Show the welcome guide on startup (one-shot, can be disabled).
 
-        Contains the old HomePage content: a 3-step getting-started guide
-        with a "don't show again" checkbox that persists to preferences.
+        Reflects the app's current position: an integrated tool that
+        combines audio playback, lyric timing/editing, translation,
+        metadata editing and a playlist/media library.
         """
         from PyQt6.QtWidgets import (
             QCheckBox,
@@ -511,7 +512,7 @@ class MainWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("欢迎使用集成歌曲编辑器")
-        dlg.setMinimumSize(460, 420)
+        dlg.setMinimumSize(480, 440)
 
         lay = QVBL(dlg)
         lay.setContentsMargins(28, 24, 28, 16)
@@ -524,7 +525,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(title)
 
         # ── Subtitle ──
-        sub = QLabel("LRC 歌词制作 · 打轴 · 翻译 · 元数据编辑")
+        sub = QLabel("音频播放 · 歌词制作 · 元信息编辑 · 歌单媒体库")
         sub.setStyleSheet("font-size: 13px; color: gray;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(sub)
@@ -533,14 +534,16 @@ class MainWindow(QMainWindow):
 
         # ── Steps ──
         for text in [
-            "1. 点击左下角加载音频，或将文件拖入窗口",
-            "2. 在「歌词制作」页面导入歌词文本",
-            "3. 播放音频，按空格键逐行打时间戳 🎵",
-            "4. 用编辑功能精细调整：拆分、合并、删除、翻译",
+            "1. 🎵 加载音频：点击左下角 🎵 按钮，或把文件直接拖进窗口",
+            "2. ▶ 播放控制：空格键全局播放/暂停，← → 快进快退 5 秒",
+            "3. 📝 歌词制作：在「歌词制作」页导入歌词，播放中按空格打时间戳",
+            "4. 🗂 歌单媒体库：在「歌单」页选择文件夹，扫描成树状歌单，点击即播",
+            "5. 🏷 编辑元信息：改标题/歌手/封面，甚至重命名音频文件",
+            "6. ⚙ 偏好与快捷键：全部可在「设置」页自定义",
         ]:
             lbl = QLabel(text)
             lbl.setWordWrap(True)
-            lbl.setStyleSheet("font-size: 15px;")
+            lbl.setStyleSheet("font-size: 14px;")
             lay.addWidget(lbl)
 
         lay.addSpacing(8)
@@ -568,7 +571,27 @@ class MainWindow(QMainWindow):
         btns.rejected.connect(dlg.reject)
         lay.addWidget(btns)
 
+        # ── Render-artifact guard ──
+        # The modal exec() disables the main window; on Windows, parts of
+        # a disabled window can be left unrepainted (ghost "shadow" +
+        # duplicated text).  Hide the always-on-top toast overlay first
+        # (it floats at a fixed position, unaffected by the dialog), flush
+        # pending paints, and force a full redraw after the dialog closes.
+        toast_was_visible = self.toast_overlay.isVisible()
+        self.toast_overlay.hide()
+        QApplication.processEvents()
+        self.repaint()
+
         dlg.exec()
+
+        # Restore toast visibility if it still has queued items
+        if toast_was_visible and self.toast_overlay._toasts:
+            self.toast_overlay.show()
+
+        # Force full redraw to clear any stale pixels
+        self.update()
+        self.content_stack.update()
+        self.footer_bar.update()
 
         # Persist preference
         if cb.isChecked():
