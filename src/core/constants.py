@@ -74,7 +74,6 @@ class InputAction(StrEnum):
     SAVE = "save"
     EXPORT = "export"
     TRANSLATE = "translate"
-    PREVIEW = "preview"
     LOAD_AUDIO = "loadAudio"
 
     # Global

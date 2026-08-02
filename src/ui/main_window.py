@@ -712,7 +712,6 @@ class MainWindow(QMainWindow):
             ("⑤ 保存导出",
              "• Ctrl+S 保存 → 直接覆盖源歌词文件\n"
              "• Ctrl+Shift+S 导出 → 另存为新文件\n"
-             "• Ctrl+L 预览 → 查看最终 LRC 输出效果\n"
              "• 退出时可选自动覆写源文件（在设置中配置）"),
         ]
         for title, desc in steps:

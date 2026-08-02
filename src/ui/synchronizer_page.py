@@ -173,12 +173,6 @@ class SynchronizerPage(QWidget):
         self._btn_save.clicked.connect(self._on_save)
         toolbar.addWidget(self._btn_save)
 
-        # Preview button — read-only output preview
-        self._btn_preview = QPushButton("预览")
-        self._btn_preview.setToolTip("预览 LRC 输出效果")
-        self._btn_preview.clicked.connect(self._on_preview)
-        toolbar.addWidget(self._btn_preview)
-
         toolbar.addStretch()
 
         return toolbar
@@ -815,11 +809,6 @@ class SynchronizerPage(QWidget):
             event.accept()
             self._btn_translate.setChecked(not self._btn_translate.isChecked())
             self._on_translate_toggle()
-            return
-
-        elif action == InputAction.PREVIEW:
-            event.accept()
-            self._on_preview()
             return
 
         elif action == InputAction.LOAD_AUDIO:
