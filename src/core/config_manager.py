@@ -210,6 +210,16 @@ class ConfigManager:
                     f"音频「{mp3_stem}」与歌词文件「{lrc_stem}」不匹配，"
                     f"拒绝覆写以防止张冠李戴"
                 )
+            # ── Directory guard: only ever write to the audio's
+            # own folder.  A stale ``lastLrcPath`` pointing at the
+            # same stem in a different folder must not be touched.
+            lrc_dir = os.path.normcase(os.path.normpath(os.path.dirname(lrc_path)))
+            mp3_dir = os.path.normcase(os.path.normpath(os.path.dirname(mp3_path)))
+            if lrc_dir != mp3_dir:
+                return False, (
+                    f"歌词文件目录与音频不一致"
+                    f"（音频: {mp3_path}），拒绝跨目录覆写"
+                )
 
         # ── Write ───────────────────────────────────────────
         try:
