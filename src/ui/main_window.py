@@ -61,12 +61,14 @@ class MainWindow(QMainWindow):
         # Every preference tweak (spinbox drag, checkbox toggle) calls
         # update_preferences() which rebuilds the app-wide QSS and
         # re-polishes every widget.  Coalesce rapid changes into one
-        # application so the settings page stays smooth.
-        self._pending_prefs: dict | None = None
+        # application so the settings page stays smooth.  (Disk write
+        # and format options apply immediately — only the theme QSS
+        # rebuild is debounced.)
+        self._pending_theme: dict | None = None
         self._prefs_debounce = QTimer(self)
         self._prefs_debounce.setSingleShot(True)
         self._prefs_debounce.setInterval(150)
-        self._prefs_debounce.timeout.connect(self._apply_pending_prefs)
+        self._prefs_debounce.timeout.connect(self._apply_pending_theme)
 
         # Load saved preferences
         prefs = self.config.get_preferences()
@@ -781,22 +783,19 @@ class MainWindow(QMainWindow):
     def update_preferences(self, prefs: dict) -> None:
         """Apply preference changes to all components.
 
-        Debounced: rapid successive calls (e.g. dragging a spinbox,
-        toggling checkboxes in quick succession) are coalesced into a
-        single application 150ms after the last change, because each
-        application rebuilds the app-wide QSS and re-polishes every
-        widget — expensive with large trees like the playlist page.
+        Cheap parts — disk write and format options — apply immediately
+        so a change is never lost even if the app exits right away.  The
+        expensive part — the app-wide QSS rebuild that re-polishes every
+        widget (slow with large trees like the playlist page) — is
+        debounced into a single application 150ms after the last change.
         """
-        self._pending_prefs = prefs
+        self.config.set_preferences(prefs)
+        self._apply_format_options(prefs)
+        self._pending_theme = prefs
         self._prefs_debounce.start()
 
-    def _apply_pending_prefs(self) -> None:
-        """Actually apply the latest pending preferences (debounced)."""
-        prefs = self._pending_prefs
-        self._pending_prefs = None
-        if prefs is None:
-            return
-
+    def _apply_format_options(self, prefs: dict) -> None:
+        """Update trim/format options immediately from *prefs*."""
         space_start = prefs.get("spaceStart", 1)
         space_end = prefs.get("spaceEnd", 0)
         self._trim_options = TrimOptions(
@@ -810,9 +809,13 @@ class MainWindow(QMainWindow):
             end_of_line="\r\n",
         )
         self.lrc_state.update_format_options(self._format_options)
-        self.config.set_preferences(prefs)
 
-        # Re-apply theme
+    def _apply_pending_theme(self) -> None:
+        """Apply the latest pending theme (debounced QSS rebuild)."""
+        prefs = self._pending_theme
+        self._pending_theme = None
+        if prefs is None:
+            return
         from .content_stack import apply_theme
         apply_theme(prefs)
 
