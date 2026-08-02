@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QEvent, QObject, Qt, QTimer
 from PyQt6.QtGui import QColor, QKeyEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -95,6 +95,16 @@ class _CollapsibleGroup(QWidget):
     def set_content_layout(self, child_layout: QHBoxLayout | QFormLayout | QVBoxLayout) -> None:
         """Set the layout for the collapsible content area."""
         self._content.setLayout(child_layout)
+
+
+class _NoWheelFilter(QObject):
+    """Consume mouse-wheel events so numeric spinboxes and combos
+    can't be changed by scrolling (avoids accidental value changes)."""
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.Wheel:
+            return True  # swallow the wheel event entirely
+        return super().eventFilter(obj, event)
 
 
 class PreferencesPage(QScrollArea):
@@ -383,6 +393,18 @@ class PreferencesPage(QScrollArea):
         layout.addWidget(shortcuts_group)
 
         layout.addStretch()
+
+        # ── Disable mouse-wheel value changes ────────────────
+        # Numeric spinboxes and combos should only change by explicit
+        # click/typing — wheel scrolling over them silently changes
+        # values otherwise.
+        self._no_wheel_filter = _NoWheelFilter(self)
+        for w in (
+            self._theme_combo, self._fixed_combo,
+            self._reaction_time, self._auto_seek_delay,
+            self._undo_seek_back, self._space_start, self._space_end,
+        ):
+            w.installEventFilter(self._no_wheel_filter)
 
         # ── Preference undo / redo ────────────────────────────
         # Each tweak (spinbox drag, checkbox toggle, color pick, …)
