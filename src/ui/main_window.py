@@ -345,6 +345,11 @@ class MainWindow(QMainWindow):
             self._show_help_dialog()
             return True
         elif action == InputAction.UNDO:
+            # On the preferences page, undo preference changes instead
+            if self.content_stack.currentIndex() == PageRoute.PREFERENCES:
+                prefs_page = self.content_stack._pages.get(PageRoute.PREFERENCES)
+                if prefs_page is not None and prefs_page.undo():
+                    return True
             # Snapshot timestamps so we can detect a sync / set_time undo
             pre_count = len(self.lrc_state.lyric)
             pre_times = [line.time for line in self.lrc_state.lyric]
@@ -370,6 +375,11 @@ class MainWindow(QMainWindow):
 
             return True
         elif action == InputAction.REDO:
+            # On the preferences page, redo preference changes instead
+            if self.content_stack.currentIndex() == PageRoute.PREFERENCES:
+                prefs_page = self.content_stack._pages.get(PageRoute.PREFERENCES)
+                if prefs_page is not None and prefs_page.redo():
+                    return True
             self.lrc_state.redo()
             return True
 

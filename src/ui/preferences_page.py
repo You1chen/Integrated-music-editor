@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QKeyEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -384,6 +384,19 @@ class PreferencesPage(QScrollArea):
 
         layout.addStretch()
 
+        # ── Preference undo / redo ────────────────────────────
+        # Each tweak (spinbox drag, checkbox toggle, color pick, …)
+        # records the pre-change snapshot.  Rapid changes to the same
+        # control are coalesced via a debounce timer into one undo step.
+        self._snapshot_prefs: dict = dict(prefs)
+        self._undo_stack: list[tuple] = []
+        self._redo_stack: list[tuple] = []
+        self._pending_before: dict | None = None
+        self._dirty_timer = QTimer(self)
+        self._dirty_timer.setSingleShot(True)
+        self._dirty_timer.setInterval(350)
+        self._dirty_timer.timeout.connect(self._commit_pending_undo)
+
         # Update preview
         self._update_format_preview()
 
@@ -534,23 +547,41 @@ class PreferencesPage(QScrollArea):
 
     def _on_edit_shortcut(self, action) -> None:
         """Open the key-capture dialog for a specific action."""
+        before = self._mw.keybinding_manager.user_overrides
         dialog = _KeyCaptureDialog(action, self._mw, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            after = self._mw.keybinding_manager.user_overrides
+            self._record_key_change(before, after)
             self._refresh_shortcut_labels()
 
     def _on_reset_shortcut(self, action) -> None:
         """Reset a single action to its default bindings."""
+        before = self._mw.keybinding_manager.user_overrides
         self._mw.keybinding_manager.reset_user_binding(action)
         self._mw.config.set_keybindings(
             self._mw.keybinding_manager.user_overrides
         )
+        after = self._mw.keybinding_manager.user_overrides
+        self._record_key_change(before, after)
         self._refresh_shortcut_labels()
 
     def _on_reset_all_shortcuts(self) -> None:
         """Reset all shortcuts to defaults."""
+        before = self._mw.keybinding_manager.user_overrides
         self._mw.keybinding_manager.reset_all()
         self._mw.config.set_keybindings({})
+        after = self._mw.keybinding_manager.user_overrides
+        self._record_key_change(before, after)
         self._refresh_shortcut_labels()
+
+    def _record_key_change(self, before: dict, after: dict) -> None:
+        """Push a keybinding change onto the undo stack."""
+        if before == after:
+            return
+        self._undo_stack.append(("key", before, after))
+        self._redo_stack.clear()
+        if len(self._undo_stack) > 50:
+            self._undo_stack.pop(0)
 
     # ── Handlers ─────────────────────────────────────────
 
@@ -559,13 +590,13 @@ class PreferencesPage(QScrollArea):
         if mode is not None:
             prefs = self._mw.config.get_preferences()
             prefs["themeMode"] = mode
-            self._mw.update_preferences(prefs)
+            self._apply_new_prefs(prefs)
             self._mw.lrc_state.state_changed.emit()  # refresh inline row styles
 
     def _on_color_pick(self, color: str) -> None:
         prefs = self._mw.config.get_preferences()
         prefs["themeColor"] = color
-        self._mw.update_preferences(prefs)
+        self._apply_new_prefs(prefs)
         self._update_color_buttons(color)
         self._mw.lrc_state.state_changed.emit()  # refresh inline row styles
 
@@ -575,7 +606,8 @@ class PreferencesPage(QScrollArea):
             hex_color = color.name()
             prefs = self._mw.config.get_preferences()
             prefs["themeColor"] = hex_color
-            self._mw.update_preferences(prefs)
+            self._apply_new_prefs(prefs)
+            self._update_color_buttons(hex_color)
             self._mw.lrc_state.state_changed.emit()  # refresh inline row styles
 
     def _on_toggle_changed(self) -> None:
@@ -612,7 +644,177 @@ class PreferencesPage(QScrollArea):
         prefs["autoSeekVerify"] = self._auto_seek_cb.isChecked()
         prefs["autoSeekDelay"] = self._auto_seek_delay.value()
         prefs["undoSeekBackSeconds"] = self._undo_seek_back.value()
+        self._apply_new_prefs(prefs)
+
+    # ── Preference undo / redo ────────────────────────────────
+
+    def _apply_new_prefs(self, new_prefs: dict) -> None:
+        """Record a pre-change snapshot, then apply *new_prefs*."""
+        self._mark_dirty()
+        self._snapshot_prefs = dict(new_prefs)
+        self._mw.update_preferences(new_prefs)
+
+    def _mark_dirty(self) -> None:
+        """Queue an undo snapshot of the state before this change burst.
+
+        Rapid changes (e.g. dragging a spinbox) all share the same
+        ``_pending_before``, so they collapse into one undo step once
+        the debounce timer fires.
+        """
+        if self._pending_before is None:
+            self._pending_before = dict(self._snapshot_prefs)
+            self._dirty_timer.start()
+        else:
+            # Same burst — keep the original before-state, restart the timer
+            self._dirty_timer.start()
+
+    def _commit_pending_undo(self) -> None:
+        """Push the coalesced before/after snapshot onto the undo stack."""
+        if self._pending_before is None:
+            return
+        self._undo_stack.append(
+            ("prefs", self._pending_before, dict(self._snapshot_prefs))
+        )
+        self._pending_before = None
+        self._redo_stack.clear()  # new change invalidates redo history
+        if len(self._undo_stack) > 50:
+            self._undo_stack.pop(0)
+
+    def undo(self) -> bool:
+        """Undo the last preference / keybinding change."""
+        self._commit_pending_undo()  # finalize an in-flight change first
+        if not self._undo_stack:
+            return False
+        op = self._undo_stack.pop()
+        if op[0] == "prefs":
+            self._apply_state(op[1])
+        else:
+            self._apply_keybindings(op[1])
+        self._redo_stack.append(op)
+        return True
+
+    def redo(self) -> bool:
+        """Redo the last undone preference / keybinding change."""
+        if not self._redo_stack:
+            return False
+        op = self._redo_stack.pop()
+        if op[0] == "prefs":
+            self._apply_state(op[2])
+        else:
+            self._apply_keybindings(op[2])
+        self._undo_stack.append(op)
+        return True
+
+    def _apply_keybindings(self, overrides: dict) -> None:
+        """Replace all keybinding user-overrides with *overrides*."""
+        from ..core.constants import InputAction
+        km = self._mw.keybinding_manager
+        km.reset_all()
+        for action_str, binding_dicts in overrides.items():
+            try:
+                act = InputAction(action_str)
+            except ValueError:
+                continue
+            km.set_user_binding(
+                act, [KeyBinding.from_dict(d) for d in binding_dicts]
+            )
+        self._mw.config.set_keybindings(overrides)
+        self._refresh_shortcut_labels()
+
+    def _apply_state(self, prefs: dict) -> None:
+        """Apply a snapshot state and sync all widgets to it."""
+        self._snapshot_prefs = dict(prefs)
         self._mw.update_preferences(prefs)
+        self._sync_widgets_from_prefs(prefs)
+
+    def _sync_widgets_from_prefs(self, prefs: dict) -> None:
+        """Set every control's value from *prefs* without re-triggering changes."""
+        self._theme_combo.blockSignals(True)
+        self._theme_combo.setCurrentIndex(
+            max(0, self._theme_combo.findData(prefs.get("themeMode", ThemeMode.AUTO)))
+        )
+        self._theme_combo.blockSignals(False)
+
+        self._show_waveform_cb.blockSignals(True)
+        self._show_waveform_cb.setChecked(prefs.get("showWaveform", True))
+        self._show_waveform_cb.blockSignals(False)
+
+        self._space_btn_cb.blockSignals(True)
+        self._space_btn_cb.setChecked(prefs.get("screenButton", False))
+        self._space_btn_cb.blockSignals(False)
+
+        self._show_welcome_cb.blockSignals(True)
+        self._show_welcome_cb.setChecked(prefs.get("showWelcome", True))
+        self._show_welcome_cb.blockSignals(False)
+
+        self._remember_draft_cb.blockSignals(True)
+        self._remember_draft_cb.setChecked(prefs.get("rememberDraft", True))
+        self._remember_draft_cb.blockSignals(False)
+
+        self._overwrite_source_cb.blockSignals(True)
+        self._overwrite_source_cb.setChecked(prefs.get("overwriteSourceOnExit", False))
+        self._overwrite_source_cb.blockSignals(False)
+
+        self._remember_lrc_cb.blockSignals(True)
+        self._remember_lrc_cb.setChecked(prefs.get("rememberLastLrc", True))
+        self._remember_lrc_cb.blockSignals(False)
+
+        self._remember_mp3_cb.blockSignals(True)
+        self._remember_mp3_cb.setChecked(prefs.get("rememberLastMp3", True))
+        self._remember_mp3_cb.blockSignals(False)
+
+        self._remember_rate_cb.blockSignals(True)
+        self._remember_rate_cb.setChecked(prefs.get("rememberPlaybackRate", False))
+        self._remember_rate_cb.blockSignals(False)
+
+        self._show_save_warning_cb.blockSignals(True)
+        self._show_save_warning_cb.setChecked(prefs.get("showSaveWarning", True))
+        self._show_save_warning_cb.blockSignals(False)
+
+        self._enable_smart_import_cb.blockSignals(True)
+        self._enable_smart_import_cb.setChecked(prefs.get("enableSmartImport", True))
+        self._enable_smart_import_cb.blockSignals(False)
+
+        self._browse_dir_input.blockSignals(True)
+        self._browse_dir_input.setText(prefs.get("defaultBrowseDir", ""))
+        self._browse_dir_input.blockSignals(False)
+
+        self._cover_browse_dir_input.blockSignals(True)
+        self._cover_browse_dir_input.setText(prefs.get("defaultCoverBrowseDir", ""))
+        self._cover_browse_dir_input.blockSignals(False)
+
+        self._reaction_time.blockSignals(True)
+        self._reaction_time.setValue(prefs.get("reactionTimeMs", 100))
+        self._reaction_time.blockSignals(False)
+
+        self._auto_seek_cb.blockSignals(True)
+        self._auto_seek_cb.setChecked(prefs.get("autoSeekVerify", False))
+        self._auto_seek_cb.blockSignals(False)
+
+        self._auto_seek_delay.blockSignals(True)
+        self._auto_seek_delay.setValue(prefs.get("autoSeekDelay", 1.0))
+        self._auto_seek_delay.blockSignals(False)
+
+        self._undo_seek_back.blockSignals(True)
+        self._undo_seek_back.setValue(prefs.get("undoSeekBackSeconds", 3.0))
+        self._undo_seek_back.blockSignals(False)
+
+        self._fixed_combo.blockSignals(True)
+        self._fixed_combo.setCurrentIndex(
+            max(0, self._fixed_combo.findData(prefs.get("fixed", 3)))
+        )
+        self._fixed_combo.blockSignals(False)
+
+        self._space_start.blockSignals(True)
+        self._space_start.setValue(prefs.get("spaceStart", 1))
+        self._space_start.blockSignals(False)
+
+        self._space_end.blockSignals(True)
+        self._space_end.setValue(prefs.get("spaceEnd", 0))
+        self._space_end.blockSignals(False)
+
+        self._update_color_buttons(prefs.get("themeColor", DEFAULT_THEME_COLOR))
+        self._update_format_preview()
 
     def _on_file_memory_changed(self) -> None:
         self._save_prefs()
