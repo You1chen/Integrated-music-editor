@@ -57,6 +57,17 @@ class MainWindow(QMainWindow):
         # (used to detect audio switches and clear stale lyrics)
         self._last_audio_for_lrc: str = ""
 
+        # ── Preference application debounce ──────────────────────
+        # Every preference tweak (spinbox drag, checkbox toggle) calls
+        # update_preferences() which rebuilds the app-wide QSS and
+        # re-polishes every widget.  Coalesce rapid changes into one
+        # application so the settings page stays smooth.
+        self._pending_prefs: dict | None = None
+        self._prefs_debounce = QTimer(self)
+        self._prefs_debounce.setSingleShot(True)
+        self._prefs_debounce.setInterval(150)
+        self._prefs_debounce.timeout.connect(self._apply_pending_prefs)
+
         # Load saved preferences
         prefs = self.config.get_preferences()
 
@@ -758,7 +769,24 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def update_preferences(self, prefs: dict) -> None:
-        """Apply preference changes to all components."""
+        """Apply preference changes to all components.
+
+        Debounced: rapid successive calls (e.g. dragging a spinbox,
+        toggling checkboxes in quick succession) are coalesced into a
+        single application 150ms after the last change, because each
+        application rebuilds the app-wide QSS and re-polishes every
+        widget — expensive with large trees like the playlist page.
+        """
+        self._pending_prefs = prefs
+        self._prefs_debounce.start()
+
+    def _apply_pending_prefs(self) -> None:
+        """Actually apply the latest pending preferences (debounced)."""
+        prefs = self._pending_prefs
+        self._pending_prefs = None
+        if prefs is None:
+            return
+
         space_start = prefs.get("spaceStart", 1)
         space_end = prefs.get("spaceEnd", 0)
         self._trim_options = TrimOptions(
