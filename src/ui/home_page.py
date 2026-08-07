@@ -282,6 +282,25 @@ class HomePage(QWidget):
         except Exception:
             pass  # Best-effort — never break the cover save
 
+        self._notify_playlist()
+
+    def _notify_playlist(self) -> None:
+        """Best-effort: refresh the current song entry in the playlist.
+
+        The cover write changed the file on disk (new mtime/size), so the
+        playlist's cached fingerprint must be updated or the next
+        incremental rescan would re-read the file unnecessarily.
+        """
+        try:
+            from ..core.constants import PageRoute
+            playlist_page = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
+            if playlist_page is not None and hasattr(playlist_page, "refresh_song"):
+                path = self._mw.audio_manager.local_path
+                if path:
+                    playlist_page.refresh_song(path)
+        except Exception:
+            pass  # Best-effort — never break the cover save
+
     # ── Cover: icon rendering ────────────────────────────────────
 
     def _update_cover_icon(self) -> None:

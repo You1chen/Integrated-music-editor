@@ -583,8 +583,25 @@ class SynchronizerPage(QWidget):
             # Notify listeners (home page lyrics axis, etc.) to refresh
             # from the current in-memory state — no file re-read needed.
             self._mw.lrc_state.state_changed.emit()
+            self._notify_playlist()
         else:
             QMessageBox.warning(self, "错误", msg)
+
+    def _notify_playlist(self) -> None:
+        """Best-effort: refresh the playlist's 📝 indicator for this song.
+
+        Saving lyrics creates/overwrites ``{audio_stem}.lrc`` next to the
+        audio, which is what the playlist's has_lrc flag reflects.
+        """
+        try:
+            from ..core.constants import PageRoute
+            playlist_page = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
+            if playlist_page is not None and hasattr(playlist_page, "refresh_song"):
+                path = self._mw.audio_manager.local_path
+                if path:
+                    playlist_page.refresh_song(path)
+        except Exception:
+            pass  # Best-effort — don't break save on playlist errors
 
     def _show_save_warning_dialog(self) -> None:
         """Show the overwrite warning dialog with preview/cancel options."""
