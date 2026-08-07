@@ -79,7 +79,10 @@ class _CollapsibleGroup(QWidget):
         self._layout.addWidget(self._header_btn)
 
         # Content area
-        self._content = QWidget()
+        # NOTE: parent right away — a parentless QWidget that is shown
+        # before being added to a layout becomes a top-level native
+        # window and flashes on screen during startup.
+        self._content = QWidget(self)
         self._content.setStyleSheet("QWidget { background: transparent; border: none; }")
         self._content.setVisible(expanded)
         self._layout.addWidget(self._content)
