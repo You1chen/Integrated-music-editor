@@ -35,18 +35,41 @@ if TYPE_CHECKING:
 
 
 class _ScanWorker(QThread):
-    """Scans directories recursively for .mp3 files in a background thread."""
+    """Scans directories recursively for .mp3 files in a background thread.
 
-    scan_finished = pyqtSignal(list)  # list[dict] — song entries
+    Supports two modes:
+      - full scan (existing_songs is None): mutagen-parses every file.
+      - incremental scan (existing_songs given): reuses cached entries whose
+        mtime/size fingerprint is unchanged, only re-parsing files that were
+        added or modified on disk. Deleted files are dropped from the result.
+    """
+
+    scan_finished = pyqtSignal(list, int, int, int)  # (songs, added, updated, removed)
 
     def __init__(
-        self, root_dirs: list[str], parent: QWidget | None = None
+        self,
+        root_dirs: list[str],
+        existing_songs: list[dict] | None = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._root_dirs = root_dirs
+        self._existing_songs = existing_songs
 
     def run(self) -> None:
         import mutagen
+
+        # Index existing songs by normalized path for incremental matching.
+        existing: dict[str, dict] = {}
+        if self._existing_songs:
+            existing = {
+                _norm_path(s["path"]): s
+                for s in self._existing_songs
+                if s.get("path")
+            }
+        seen: set[str] = set()
+        added = 0
+        updated = 0
 
         songs: list[dict] = []
 
@@ -58,6 +81,28 @@ class _ScanWorker(QThread):
                     if not fname.lower().endswith(".mp3"):
                         continue
                     full_path = os.path.join(dirpath, fname)
+                    key = _norm_path(full_path)
+
+                    try:
+                        st = os.stat(full_path)
+                    except OSError:
+                        continue
+
+                    cached = existing.get(key)
+
+                    # ── Fast path: fingerprint unchanged → reuse entry ──
+                    if cached is not None and (
+                        cached.get("mtime_ns") == st.st_mtime_ns
+                        and cached.get("size") == st.st_size
+                    ):
+                        song = dict(cached)  # keep stored "path" string stable
+                        stem = os.path.splitext(full_path)[0]
+                        song["has_lrc"] = os.path.isfile(stem + ".lrc")
+                        songs.append(song)
+                        seen.add(key)
+                        continue
+
+                    # ── Slow path: new or modified file → full parse ──
                     try:
                         audio = mutagen.File(full_path)
                     except Exception:
@@ -137,14 +182,29 @@ class _ScanWorker(QThread):
                         "duration": duration,
                         "has_lrc": has_lrc,
                         "liked": False,
+                        "mtime_ns": st.st_mtime_ns,
+                        "size": st.st_size,
                     })
+                    seen.add(key)
+                    if cached is not None:
+                        updated += 1
+                    else:
+                        added += 1
+
+        # Songs that existed before but are no longer on disk
+        removed = sum(1 for k in existing if k not in seen)
 
         songs.sort(key=lambda s: (
             os.path.dirname(s["path"]).lower(),
             s["title"].lower(),
         ))
 
-        self.scan_finished.emit(songs)
+        self.scan_finished.emit(songs, added, updated, removed)
+
+
+def _norm_path(p: str) -> str:
+    """Normalize a path for use as a dict key (Windows case-insensitive)."""
+    return os.path.normcase(os.path.normpath(p))
 
 
 def _first(lst) -> str:
@@ -522,6 +582,7 @@ class PlaylistPage(QScrollArea):
         self._saved_expanded: dict[str, bool] | None = None
         self._search_timer: QTimer | None = None
         self._root_dir: str = ""
+        self._scan_incremental: bool = False
 
         # ── Container ──
         container = QWidget()
@@ -611,18 +672,28 @@ class PlaylistPage(QScrollArea):
                 "warning", "请先选择文件夹再进行扫描"
             )
             return
-        self._start_scan([self._root_dir])
+        self._start_scan([self._root_dir], incremental=True)
 
-    def _start_scan(self, root_dirs: list[str]) -> None:
+    def _start_scan(
+        self, root_dirs: list[str], incremental: bool = False
+    ) -> None:
         self._mw.toast_overlay.show_toast("info", "正在扫描音乐文件...")
         self._btn_select.setEnabled(False)
         self._btn_rescan.setEnabled(False)
 
-        self._worker = _ScanWorker(root_dirs, parent=self)
+        self._scan_incremental = incremental
+        # Shallow-copy snapshot so a like toggle / refresh_song on the main
+        # thread mid-scan can't race with the worker reading the same dicts.
+        existing = [dict(s) for s in self._all_songs] if incremental else []
+        self._worker = _ScanWorker(
+            root_dirs, existing_songs=existing, parent=self
+        )
         self._worker.scan_finished.connect(self._on_scan_finished)
         self._worker.start()
 
-    def _on_scan_finished(self, songs: list[dict]) -> None:
+    def _on_scan_finished(
+        self, songs: list[dict], added: int, updated: int, removed: int
+    ) -> None:
         # ── Merge liked state from existing cache ──
         old_cache = self._mw.config.get_playlist_cache()
         old_liked: set[str] = set()
@@ -647,9 +718,16 @@ class PlaylistPage(QScrollArea):
 
         self._btn_select.setEnabled(True)
         self._btn_rescan.setEnabled(True)
-        self._mw.toast_overlay.show_toast(
-            "success", f"扫描完成，共 {len(songs)} 首"
-        )
+        if self._scan_incremental:
+            self._mw.toast_overlay.show_toast(
+                "success",
+                f"扫描完成，共 {len(songs)} 首"
+                f"（新增 {added}，更新 {updated}，删除 {removed}）",
+            )
+        else:
+            self._mw.toast_overlay.show_toast(
+                "success", f"扫描完成，共 {len(songs)} 首"
+            )
 
     # ── Tree builder ──────────────────────────────────────────
 
@@ -851,6 +929,15 @@ class PlaylistPage(QScrollArea):
         stem = os.path.splitext(actual)[0]
         has_lrc = os.path.isfile(stem + ".lrc")
 
+        # Fresh fingerprint so the next incremental rescan reuses this entry
+        try:
+            st = os.stat(actual)
+            mtime_ns = st.st_mtime_ns
+            size = st.st_size
+        except OSError:
+            mtime_ns = 0
+            size = 0
+
         # ── Update in-memory list ──
         updated_song = None
         for song in self._all_songs:
@@ -867,6 +954,8 @@ class PlaylistPage(QScrollArea):
                 song["comment"] = comment
                 song["duration"] = duration
                 song["has_lrc"] = has_lrc
+                song["mtime_ns"] = mtime_ns
+                song["size"] = size
                 updated_song = song
                 break
 
@@ -886,6 +975,8 @@ class PlaylistPage(QScrollArea):
                 s["comment"] = comment
                 s["duration"] = duration
                 s["has_lrc"] = has_lrc
+                s["mtime_ns"] = mtime_ns
+                s["size"] = size
                 break
         self._mw.config.set_playlist_cache(cache)
 
