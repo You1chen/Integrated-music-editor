@@ -193,12 +193,22 @@ class _LyricRow(QFrame):
         self._exit_split_mode()
 
     def _exit_edit_mode(self, save: bool = True) -> None:
-        """Leave edit mode, optionally saving changes."""
+        """Leave edit mode, optionally saving changes.
+
+        Text containing interior ``//`` markers is treated as a line-break
+        signal (same as split mode): the line is split at those markers
+        and the markers are removed.
+        """
         in_edit = self._display_stack.currentIndex() == 1
         if save and in_edit:
             new_text = self._edit_input.text()
             if new_text != self._line.text:
-                self.lyric_text_changed.emit(self._index, new_text)
+                result = self._marker_split_result(new_text)
+                if result is not None:
+                    cleaned, positions = result
+                    self.lyric_split_done.emit(self._index, cleaned, positions)
+                else:
+                    self.lyric_text_changed.emit(self._index, new_text)
         self._display_stack.setCurrentIndex(0)
 
     def enter_split_mode(self) -> None:
@@ -251,6 +261,34 @@ class _LyricRow(QFrame):
             idx += 2
         return positions
 
+    @staticmethod
+    def _marker_split_result(text: str) -> "tuple[str, list[int]] | None":
+        """Resolve '//' markers into a line split (shared by edit & split mode).
+
+        Returns ``(cleaned_text, split_positions)`` when *text* contains at
+        least one interior ``//`` marker, otherwise ``None`` (caller keeps
+        the text as-is).  Markers at the very start/end are ignored.
+        """
+        markers = _LyricRow._find_markers(text)
+        if not any(0 < p < len(text) - 1 for p in markers):
+            return None
+
+        # Remove "//" entirely from right to left
+        cleaned = text
+        for pos in reversed(markers):
+            cleaned = cleaned[:pos] + cleaned[pos + 2:]
+
+        # Compute split positions in cleaned text; each removed "//"
+        # shifts subsequent positions left by 2.
+        split_positions = [
+            pos - 2 * i
+            for i, pos in enumerate(markers)
+            if 0 < pos - 2 * i < len(cleaned)
+        ]
+        if not split_positions:
+            return None
+        return cleaned, split_positions
+
     def _apply_split_highlights(self) -> None:
         """Highlight '//' markers with blinking ExtraSelections."""
         if not self._split_blink_on:
@@ -298,31 +336,11 @@ class _LyricRow(QFrame):
         No valid markers → silently exit split mode (no-op).
         """
         text = self._split_input.toPlainText()
-        markers = self._find_markers(text)
-
-        # Filter: ignore markers at very start or end of text
-        valid_markers = [p for p in markers if 0 < p < len(text) - 1]
-        if not valid_markers:
+        result = self._marker_split_result(text)
+        if result is None:
             self._exit_split_mode()
             return
-
-        # Remove "//" entirely from right to left
-        cleaned = text
-        for pos in reversed(markers):
-            cleaned = cleaned[:pos] + cleaned[pos + 2:]
-
-        # Compute split positions in cleaned text
-        # Each removed "//" shifts subsequent positions left by 2
-        split_positions: list[int] = []
-        for i, pos in enumerate(markers):
-            adjusted = pos - 2 * i
-            if 0 < adjusted < len(cleaned):
-                split_positions.append(adjusted)
-
-        if not split_positions:
-            self._exit_split_mode()
-            return
-
+        cleaned, split_positions = result
         self.lyric_split_done.emit(self._index, cleaned, split_positions)
         self._exit_split_mode()
 
