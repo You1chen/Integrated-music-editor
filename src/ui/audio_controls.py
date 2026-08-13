@@ -110,11 +110,12 @@ class AudioControls(QWidget):
         layout.addWidget(self._waveform, stretch=3)
 
         # ── Rate Display ────────────────────────────────
-        self._rate_btn = QPushButton("×1.00")
+        self._rate_btn = _RateButton("×1.00")
         self._rate_btn.setObjectName("audioButton")
-        self._rate_btn.setToolTip("点击输入/调整播放速度")
+        self._rate_btn.setToolTip("单击重置为 1.00 · 双击输入/调整播放速度")
         self._rate_btn.setFixedWidth(60)
-        self._rate_btn.clicked.connect(self._open_rate_dialog)
+        self._rate_btn.clicked.connect(self._on_rate_clicked)
+        self._rate_btn.double_clicked.connect(self._open_rate_dialog)
         layout.addWidget(self._rate_btn)
 
         # ── Rate Slider (log scale) ─────────────────────
@@ -139,6 +140,12 @@ class AudioControls(QWidget):
         self._ui_timer = QTimer(self)
         self._ui_timer.setInterval(50)  # 20fps for UI
         self._ui_timer.timeout.connect(self._update_display)
+
+        # Single-shot timer to defer the rate reset so a double-click
+        # (which also fires `clicked`) opens the dialog instead of resetting.
+        self._rate_reset_timer = QTimer(self)
+        self._rate_reset_timer.setSingleShot(True)
+        self._rate_reset_timer.timeout.connect(self._on_rate_reset)
 
     # ── Public API ──────────────────────────────────────────
 
@@ -219,9 +226,20 @@ class AudioControls(QWidget):
             self._mw.config.set_last_playback_rate(rate)
 
     def _open_rate_dialog(self) -> None:
-        """Open the rate-adjust dialog (click on rate display / double-click slider)."""
+        """Open the rate-adjust dialog (double-click on display/slider)."""
+        self._rate_reset_timer.stop()  # a double-click shouldn't also reset
         dialog = _RateAdjustDialog(self)
         dialog.exec()
+
+    def _on_rate_clicked(self) -> None:
+        """Single click on the display → reset, deferred to disambiguate
+        from a double-click."""
+        from PyQt6.QtWidgets import QApplication
+        self._rate_reset_timer.start(QApplication.doubleClickInterval())
+
+    def _on_rate_reset(self) -> None:
+        """Reset playback rate to 1.0 (single-click on the display)."""
+        self.set_rate(1.0)
 
     def _on_rate_changed(self, value: int) -> None:
         self.set_rate(slider_to_rate(value))
@@ -277,6 +295,16 @@ class AudioControls(QWidget):
 
 class _RateSlider(QSlider):
     """QSlider that reports double-clicks so the rate dialog can open."""
+
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        self.double_clicked.emit()
+        event.accept()
+
+
+class _RateButton(QPushButton):
+    """Rate display button that reports double-clicks for the adjust dialog."""
 
     double_clicked = pyqtSignal()
 
