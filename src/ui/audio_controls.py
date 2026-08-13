@@ -9,20 +9,41 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSlider,
+    QVBoxLayout,
     QWidget,
 )
 
 from ..core.audio_manager import AudioState, AudioStateData
-from ..core.lrc_parser import Fixed, convert_time_to_tag
+from ..core.lrc_parser import Fixed, convert_time_to_tag, guard
+from .content_stack import get_theme_colors
 
 if TYPE_CHECKING:
+    from PyQt6.QtGui import QMouseEvent
+
     from .main_window import MainWindow
+
+
+# ── Playback rate: the log-scale slider maps [-100, 100] → ln(rate) ∈ [-1, 1] ──
+RATE_MIN = math.exp(-1.0)
+RATE_MAX = math.exp(1.0)
+
+
+def rate_to_slider(rate: float) -> int:
+    """Map a linear rate to the slider integer (ln(rate) × 100)."""
+    return int(round(math.log(rate) * 100.0))
+
+
+def slider_to_rate(value: int) -> float:
+    """Map a slider integer back to a linear rate."""
+    return math.exp(value / 100.0)
 
 
 class AudioControls(QWidget):
@@ -91,17 +112,18 @@ class AudioControls(QWidget):
         # ── Rate Display ────────────────────────────────
         self._rate_btn = QPushButton("×1.00")
         self._rate_btn.setObjectName("audioButton")
-        self._rate_btn.setToolTip("重置播放速度")
+        self._rate_btn.setToolTip("点击输入/调整播放速度")
         self._rate_btn.setFixedWidth(60)
-        self._rate_btn.clicked.connect(self._on_rate_reset)
+        self._rate_btn.clicked.connect(self._open_rate_dialog)
         layout.addWidget(self._rate_btn)
 
         # ── Rate Slider (log scale) ─────────────────────
-        self._rate_slider = QSlider(Qt.Orientation.Horizontal)
+        self._rate_slider = _RateSlider(Qt.Orientation.Horizontal)
         self._rate_slider.setRange(-100, 100)  # maps to ln(rate), -1 to 1
         self._rate_slider.setValue(0)
         self._rate_slider.setFixedWidth(100)
         self._rate_slider.valueChanged.connect(self._on_rate_changed)
+        self._rate_slider.double_clicked.connect(self._open_rate_dialog)
         layout.addWidget(self._rate_slider)
 
         # ── State ───────────────────────────────────────
@@ -190,17 +212,19 @@ class AudioControls(QWidget):
     def _on_play_pause(self) -> None:
         self._mw.audio_manager.toggle()
 
-    def _on_rate_reset(self) -> None:
-        self._mw.audio_manager.playback_rate = 1.0
-        if self._mw.config.get_remember_playback_rate():
-            self._mw.config.set_last_playback_rate(1.0)
-
-    def _on_rate_changed(self, value: int) -> None:
-        log_rate = value / 100.0  # -1.0 to 1.0
-        rate = math.exp(log_rate)
+    def set_rate(self, rate: float) -> None:
+        """Apply a playback rate and persist it if the config asks to."""
         self._mw.audio_manager.playback_rate = rate
         if self._mw.config.get_remember_playback_rate():
             self._mw.config.set_last_playback_rate(rate)
+
+    def _open_rate_dialog(self) -> None:
+        """Open the rate-adjust dialog (click on rate display / double-click slider)."""
+        dialog = _RateAdjustDialog(self)
+        dialog.exec()
+
+    def _on_rate_changed(self, value: int) -> None:
+        self.set_rate(slider_to_rate(value))
 
     def _on_slider_pressed(self) -> None:
         self._seeking = True
@@ -246,3 +270,156 @@ class AudioControls(QWidget):
         else:
             self._waveform.hide()
             self._timeline.show()
+
+
+# ── Rate adjust dialog & slider support ──────────────────────────
+
+
+class _RateSlider(QSlider):
+    """QSlider that reports double-clicks so the rate dialog can open."""
+
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        self.double_clicked.emit()
+        event.accept()
+
+
+class _RateAdjustDialog(QDialog):
+    """Popup for comfortable playback-rate tuning.
+
+    A lengthened slider (bigger handle) for smooth dragging, plus a
+    precise text input with 0.01 steps. Changes apply live; Cancel
+    restores the rate the dialog was opened with.
+    """
+
+    def __init__(self, audio_controls: "AudioControls") -> None:
+        super().__init__(audio_controls._mw)
+        self._ac = audio_controls
+        self._orig_rate = audio_controls._rate
+
+        self.setWindowTitle("调整播放速度")
+        self.setMinimumWidth(480)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # ── Lengthened slider (same log mapping as the footer slider) ──
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setRange(-100, 100)
+        self._slider.setValue(rate_to_slider(self._orig_rate))
+        self._slider.setMinimumHeight(56)
+        self._slider.valueChanged.connect(self._on_slider_changed)
+        self._slider.setStyleSheet(_big_slider_qss())
+        layout.addWidget(self._slider)
+
+        # ── Precise value row ──
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._value_label = QLabel(f"×{self._orig_rate:.2f}")
+        self._value_label.setStyleSheet(
+            "font-family: monospace; font-size: 16px; font-weight: bold;"
+        )
+        self._edit = QLineEdit(f"{self._orig_rate:.2f}")
+        self._edit.setFixedWidth(72)
+        self._edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._edit.setToolTip(
+            f"输入播放速度，精度 0.01（范围 {RATE_MIN:.2f} ~ {RATE_MAX:.2f}）"
+        )
+        self._edit.returnPressed.connect(self._on_edit_commit)
+        hint = QLabel(f"范围 {RATE_MIN:.2f} ~ {RATE_MAX:.2f} · 精度 0.01")
+        hint.setStyleSheet("font-size: 12px; color: gray;")
+        row.addWidget(self._value_label)
+        row.addWidget(self._edit)
+        row.addWidget(hint)
+        row.addStretch()
+        layout.addLayout(row)
+
+        # ── Buttons ──
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        reset_btn = QPushButton("重置为 1.00")
+        reset_btn.clicked.connect(self._on_reset)
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        ok_btn = QPushButton("确认")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self._on_ok)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        self._edit.setFocus()
+        self._edit.selectAll()
+
+    # ── Handlers ──────────────────────────────────────────
+
+    def _on_slider_changed(self, value: int) -> None:
+        rate = slider_to_rate(value)
+        self._ac.set_rate(rate)
+        self._value_label.setText(f"×{rate:.2f}")
+        self._edit.setText(f"{rate:.2f}")
+
+    def _on_edit_commit(self) -> None:
+        self._apply_from_edit()
+        self.accept()
+
+    def _on_ok(self) -> None:
+        self._apply_from_edit()
+        self.accept()
+
+    def _on_reset(self) -> None:
+        self._ac.set_rate(1.0)
+        self._sync_to(1.0)
+
+    def _apply_from_edit(self) -> None:
+        try:
+            rate = float(self._edit.text().strip())
+        except ValueError:
+            self._edit.setText(f"{self._ac._rate:.2f}")
+            return
+        rate = round(guard(rate, RATE_MIN, RATE_MAX), 2)
+        self._ac.set_rate(rate)
+        self._sync_to(rate)
+
+    def _sync_to(self, rate: float) -> None:
+        self._value_label.setText(f"×{rate:.2f}")
+        self._edit.setText(f"{rate:.2f}")
+        self._slider.blockSignals(True)
+        self._slider.setValue(rate_to_slider(rate))
+        self._slider.blockSignals(False)
+
+    def reject(self) -> None:
+        """Cancel: restore the rate the dialog was opened with."""
+        self._ac.set_rate(self._orig_rate)
+        super().reject()
+
+
+def _big_slider_qss() -> str:
+    """QSS for the enlarged slider: taller groove + bigger handle."""
+    _bg, fg, theme, _dark = get_theme_colors()
+    return f"""
+    QSlider::groove:horizontal {{
+        height: 8px;
+        background: {fg};
+        border-radius: 4px;
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {theme};
+        border-radius: 4px;
+    }}
+    QSlider::handle:horizontal {{
+        width: 28px;
+        height: 28px;
+        margin: -10px 0;
+        border-radius: 14px;
+        background: {theme};
+    }}
+    QSlider::handle:horizontal:hover {{
+        background: {theme};
+        border: 2px solid #ffffff66;
+    }}
+    """
