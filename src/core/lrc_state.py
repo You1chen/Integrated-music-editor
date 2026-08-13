@@ -237,15 +237,17 @@ class LrcStateManager(QObject):
         self.lyric[index : index + 1] = new_lines
         self.state_changed.emit()
 
-    def append_line(self, after_index: int) -> None:
+    def append_line(self, after_index: int, time: Optional[float] = None) -> None:
         """Action: APPEND — insert a new empty line after *after_index*.
 
-        The new line inherits the timestamp of the reference line.
+        Uses *time* as the new line's timestamp when given; otherwise
+        inherits the timestamp of the reference line.
         """
         self._push_undo()
         if 0 <= after_index < len(self.lyric):
             ref = self.lyric[after_index]
-            new_line = LyricLine(time=ref.time, text="", translation="")
+            new_time = ref.time if time is None else time
+            new_line = LyricLine(time=new_time, text="", translation="")
             self.lyric.insert(after_index + 1, new_line)
             self.select_index = after_index + 1
             self.state_changed.emit()

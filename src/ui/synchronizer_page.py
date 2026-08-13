@@ -1245,8 +1245,9 @@ class SynchronizerPage(QWidget):
             self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行已分裂为 {count} 行")
 
     def _on_append_lyric(self, index: int) -> None:
-        """Append a new empty line after the selected row (same timestamp)."""
-        self._mw.lrc_state.append_line(index)
+        """Append a new empty line after the selected row, timestamped at the
+        current audio position minus the reaction time offset."""
+        self._mw.lrc_state.append_line(index, time=self._get_sync_time())
         target = self._mw.lrc_state.select_index
         QTimer.singleShot(0, lambda: self._scroll_to_row(target))
         self._mw.toast_overlay.show_toast("success", f"已在第 {index + 1} 行后追加新行")
