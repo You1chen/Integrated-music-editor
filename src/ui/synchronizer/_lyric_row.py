@@ -8,7 +8,7 @@ Three display modes (managed via QStackedWidget):
 Signals
 ------
 seek_requested(float)       — user clicked timestamp → seek audio
-edit_requested(int)         — user Ctrl+clicked timestamp → edit dialog
+edit_requested(int)         — user Ctrl+clicked / double-clicked timestamp → edit dialog
 row_clicked(int)            — user clicked the text area → select this line
 edit_lyric_requested(int)   — context menu "编辑" → triggers enter_edit_mode
 split_lyric_requested(int)  — context menu "拆分" → triggers enter_split_mode
@@ -33,6 +33,16 @@ from PyQt6.QtWidgets import (
 
 from ...core.lrc_parser import Fixed, LyricLine, convert_time_to_tag, format_text
 from ._helpers import _contrast_for_theme
+
+
+class _TimeButton(QPushButton):
+    """Timestamp button that reports double-clicks for inline editing."""
+
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.double_clicked.emit()
+        event.accept()
 
 
 class _LyricRow(QFrame):
@@ -88,11 +98,13 @@ class _LyricRow(QFrame):
         layout.setSpacing(6)
 
         # ── Timestamp button ──────────────────────────
-        self._time_btn = QPushButton()
+        self._time_btn = _TimeButton()
         self._time_btn.setFixedWidth(105)
         self._time_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._time_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._time_btn.setToolTip("单击跳转 · 双击或 Ctrl+单击编辑时间戳")
         self._time_btn.clicked.connect(self._on_time_clicked)
+        self._time_btn.double_clicked.connect(self._on_time_double_clicked)
         layout.addWidget(self._time_btn)
 
         # ── Display stack (3 modes) ───────────────────
@@ -377,6 +389,10 @@ class _LyricRow(QFrame):
             self.edit_requested.emit(self._index)
         elif self._line.time is not None:
             self.seek_requested.emit(self._line.time)
+
+    def _on_time_double_clicked(self) -> None:
+        """Double-click timestamp → edit its value directly."""
+        self.edit_requested.emit(self._index)
 
     def _restyle(self) -> None:
         """Apply QSS styling based on current state."""
