@@ -50,6 +50,7 @@ class PlaylistManager(QObject):
         self._autoplay_connected = False
 
         self._am.media_ended.connect(self._on_media_ended)
+        self._load()
 
     # ── Read-only accessors ──────────────────────────────────
 
@@ -217,6 +218,28 @@ class PlaylistManager(QObject):
     def _emit_all(self) -> None:
         self.queue_changed.emit()
         self.current_changed.emit(self._current_index)
+        self._save()
+
+    def _load(self) -> None:
+        """Restore the persisted queue + current index (no auto-play)."""
+        if self._config is None or not hasattr(self._config, "get_play_queue"):
+            return
+        data = self._config.get_play_queue() or {}
+        songs = [
+            dict(e) for e in data.get("songs", [])
+            if isinstance(e, dict) and e.get("path")
+        ]
+        idx = data.get("index", -1)
+        self._queue = songs
+        self._current_index = idx if 0 <= idx < len(songs) else -1
+
+    def _save(self) -> None:
+        """Persist the queue + current index (best-effort, skipped without config)."""
+        if self._config is None or not hasattr(self._config, "set_play_queue"):
+            return
+        self._config.set_play_queue(
+            [dict(e) for e in self._queue], self._current_index
+        )
 
 
 def _norm_path(p: str) -> str:

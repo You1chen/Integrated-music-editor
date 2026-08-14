@@ -384,3 +384,16 @@ class ConfigManager:
         cache["songs"] = songs
         self.set_playlist_cache(cache)
         return result
+
+    # ── Persistent: Play Queue (播放列表记忆) ──────────────
+
+    def get_play_queue(self) -> "dict[str, Any]":
+        """Return the saved play queue: {"songs": [...], "index": int}."""
+        data = self._load_config().get("playQueue", {})
+        return data if isinstance(data, dict) else {}
+
+    def set_play_queue(self, songs: "list[dict[str, Any]]", index: int) -> None:
+        """Persist the play queue and current index."""
+        cfg = self._load_config()
+        cfg["playQueue"] = {"songs": songs, "index": index}
+        self._save_config()

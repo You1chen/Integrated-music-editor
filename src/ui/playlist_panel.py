@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -30,6 +31,42 @@ from .content_stack import get_theme_colors
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
+
+
+class _ElideLabel(QLabel):
+    """Left-aligned, single-line label that elides on resize and is clickable."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full = text
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(0)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._elide()
+
+    def set_full_text(self, text: str) -> None:
+        self._full = text
+        self._elide()
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self.fontMetrics().height())
+
+    def _elide(self) -> None:
+        fm = self.fontMetrics()
+        self.setText(fm.elidedText(self._full, Qt.TextElideMode.ElideRight, max(10, self.width())))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class _QueueRow(QWidget):
@@ -50,12 +87,15 @@ class _QueueRow(QWidget):
         if song.get("artist"):
             title += f" — {song['artist']}"
 
-        self._title_btn = QPushButton(title)
-        self._title_btn.setObjectName("queueTitle")
-        self._title_btn.setFlat(True)
-        self._title_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._title_btn.clicked.connect(self._on_play)
-        layout.addWidget(self._title_btn, stretch=1)
+        self._title_label = _ElideLabel(title)
+        self._title_label.setToolTip(title.lstrip("▶ "))
+        self._title_label.clicked.connect(self._on_play)
+        if is_current:
+            _bg, _fg, theme, _dark = get_theme_colors()
+            self._title_label.setStyleSheet(
+                f"color: {theme}; font-weight: bold; background: transparent;"
+            )
+        layout.addWidget(self._title_label, stretch=1)
 
         dur = song.get("duration", 0)
         if dur and dur > 0:
@@ -65,6 +105,10 @@ class _QueueRow(QWidget):
         else:
             self._dur_label = QLabel("--:--")
         self._dur_label.setStyleSheet("font-size: 12px; color: gray;")
+        self._dur_label.setFixedWidth(40)
+        self._dur_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         layout.addWidget(self._dur_label)
 
         for text, tip, handler in (
@@ -83,12 +127,6 @@ class _QueueRow(QWidget):
             )
             btn.clicked.connect(handler)
             layout.addWidget(btn)
-
-        if is_current:
-            _bg, _fg, theme, _dark = get_theme_colors()
-            self.setStyleSheet(
-                f"_QueueRow {{ background: {theme}22; border-radius: 6px; }}"
-            )
 
     def _on_play(self) -> None:
         self._panel.play_index(self._index)
