@@ -226,6 +226,7 @@ class SynchronizerPage(QWidget):
 
     def _on_translation_changed(self, index: int, text: str) -> None:
         """Live update translation text (no undo push — per-keystroke)."""
+        self._pause_for_edit()
         state = self._mw.lrc_state
         if 0 <= index < len(state.lyric):
             state.lyric[index].translation = text
@@ -240,6 +241,7 @@ class SynchronizerPage(QWidget):
         self, target_text_edit: QPlainTextEdit | None = None
     ) -> None:
         """Open the AI assist dialog — delegates to ``_ai_assist`` module."""
+        self._pause_for_edit()
         show_ai_assist_dialog(self, target_text_edit)
 
     def _build_prompt_text(self) -> tuple[str, int] | None:
@@ -252,6 +254,7 @@ class SynchronizerPage(QWidget):
         When *initial_text* is provided, the text area is pre-filled with it
         (used by AI auto-translate to feed the API response into matching).
         """
+        self._pause_for_edit()
         dialog = QDialog(self)
         dialog.setWindowTitle("模式匹配 - 匹配翻译")
         dialog.resize(700, 500)
@@ -330,6 +333,7 @@ class SynchronizerPage(QWidget):
 
     def _on_new_draft(self) -> None:
         """Create a blank draft named after the currently loaded audio file."""
+        self._pause_for_edit()
         mp3_path = self._mw.audio_manager.local_path
         if not mp3_path:
             QMessageBox.information(self, "提示", "请先加载音频文件")
@@ -345,6 +349,7 @@ class SynchronizerPage(QWidget):
 
     def _on_import(self) -> None:
         """Import LRC file: clear draft → smart import → file browser."""
+        self._pause_for_edit()
         state = self._mw.lrc_state
 
         # Stop audio timer during the entire import flow.  Otherwise
@@ -456,6 +461,7 @@ class SynchronizerPage(QWidget):
 
     def _on_export(self) -> None:
         """Export current LRC state to a file chosen by user."""
+        self._pause_for_edit()
         info = self._mw.lrc_state.info
         parts = []
         for key in ("ti", "ar"):
@@ -498,6 +504,7 @@ class SynchronizerPage(QWidget):
 
     def _on_edit_text(self) -> None:
         """Open a dialog to directly edit the LRC text."""
+        self._pause_for_edit()
         current_text = self._mw.lrc_state.stringify(self._mw.format_options)
 
         dialog = QDialog(self)
@@ -535,6 +542,7 @@ class SynchronizerPage(QWidget):
 
     def _on_preview(self) -> None:
         """Show a read-only preview of the LRC output."""
+        self._pause_for_edit()
         text = self._mw.lrc_state.stringify(self._mw.format_options)
 
         dialog = QDialog(self)
@@ -610,6 +618,7 @@ class SynchronizerPage(QWidget):
 
     def _show_save_warning_dialog(self) -> None:
         """Show the overwrite warning dialog with preview/cancel options."""
+        self._pause_for_edit()
         dialog = QDialog(self)
         dialog.setWindowTitle("保存确认")
         dialog.setMinimumWidth(420)
@@ -802,6 +811,7 @@ class SynchronizerPage(QWidget):
         elif action == InputAction.COPY_LINE:
             if 0 <= state.select_index < len(state.lyric):
                 event.accept()
+                self._pause_for_edit()
                 state.copy_line(state.select_index)
                 self._append_target_index = state.select_index
                 target = state.select_index
@@ -1042,6 +1052,13 @@ class SynchronizerPage(QWidget):
         reaction_ms = self._mw.config.get_reaction_time_ms()
         return max(0.0, self._mw.audio_manager.current_time - reaction_ms / 1000.0)
 
+    def _pause_for_edit(self) -> None:
+        """Pause playback while the user edits lyrics or a modal dialog is
+        open, so the music doesn't distract from the editing work."""
+        audio = self._mw.audio_manager
+        if not audio.paused:
+            audio.toggle()
+
     def _on_sync(self) -> None:
         """Called by on-screen space button."""
         audio = self._mw.audio_manager
@@ -1106,6 +1123,7 @@ class SynchronizerPage(QWidget):
         touching the mouse.  After confirming, the audio seeks to the new
         timestamp and auto-plays (see ``_parse_and_set_time``).
         """
+        self._pause_for_edit()
         line = self._mw.lrc_state.lyric[index]
         prefs = self._mw.config.get_preferences()
         current_tag = convert_time_to_tag(line.time, prefs.get("fixed", 3)) if line.time is not None else ""
@@ -1206,6 +1224,7 @@ class SynchronizerPage(QWidget):
         selected = self._get_effective_selection()
         if not selected:
             return
+        self._pause_for_edit()
         count = len(selected)
         self._mw.lrc_state.delete_lines(selected)
         self._multi_selected.clear()
@@ -1234,6 +1253,7 @@ class SynchronizerPage(QWidget):
             )
             return
         count = len(selected)
+        self._pause_for_edit()
         self._mw.lrc_state.merge_lines(selected)
         self._multi_selected.clear()
         self._append_target_index = None
@@ -1256,6 +1276,7 @@ class SynchronizerPage(QWidget):
         state = self._mw.lrc_state
         if 0 <= index < len(state.lyric):
             if new_text != state.lyric[index].text:
+                self._pause_for_edit()
                 state.set_text(index, new_text)
                 self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行歌词已更新")
 
@@ -1265,6 +1286,7 @@ class SynchronizerPage(QWidget):
         if not (0 <= index < len(state.lyric)):
             return
 
+        self._pause_for_edit()
         state.set_text(index, cleaned_text)
         state.split_line(index, positions)
 
@@ -1281,6 +1303,7 @@ class SynchronizerPage(QWidget):
     def _on_append_lyric(self, index: int) -> None:
         """Append a new empty line after the selected row, timestamped at the
         current audio position minus the reaction time offset."""
+        self._pause_for_edit()
         self._mw.lrc_state.append_line(index, time=self._get_sync_time())
         target = self._mw.lrc_state.select_index
         QTimer.singleShot(0, lambda: self._scroll_to_row(target))
@@ -1303,6 +1326,7 @@ class SynchronizerPage(QWidget):
         if not lines:
             return
 
+        self._pause_for_edit()
         state = self._mw.lrc_state
 
         # Determine insert position and timestamp
