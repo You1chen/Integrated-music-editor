@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .content_stack import get_theme_colors
+from .content_stack import get_theme_colors, theme_events
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -224,10 +224,6 @@ class LyricAxisWidget(QScrollArea):
         )
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setWordWrap(True)
-        _b, _f, _t, _d = get_theme_colors()
-        self._empty_label.setStyleSheet(
-            f"color: {_blend(_f, _b, 0.38)}; font-size: 15px; padding: 40px;"
-        )
         self._layout.addWidget(self._empty_label)
         self._empty_label.hide()
 
@@ -239,29 +235,45 @@ class LyricAxisWidget(QScrollArea):
         # ── Mode toggle button (floating) ────────────────────
         self._mode_btn = QPushButton(self.MODE_LABELS[self._mode], self)
         self._mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        _b2, _f2, _t2, _d2 = get_theme_colors()
-        btn_bg = _blend(_f2, _b2, 0.12)
-        btn_bg_hover = _blend(_f2, _b2, 0.20)
-        btn_border = _blend(_f2, _b2, 0.30)
-        self._mode_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: {btn_bg}; color: {_blend(_f2, _b2, 0.70)};"
-            f"  border: 1px solid {btn_border}; border-radius: 6px;"
-            f"  padding: 3px 10px; font-size: 12px;"
-            f"}}"
-            f"QPushButton:hover {{ background: {btn_bg_hover}; }}"
-        )
         self._mode_btn.clicked.connect(self._cycle_mode)
 
         self._mw.lrc_state.state_changed.connect(self._rebuild)
         self._mw.audio_manager.current_time_changed.connect(self._on_time)
+        theme_events.changed.connect(self._on_theme_changed)
 
+        self._restyle_chrome()
         self._rebuild()
 
     # ── Public ─────────────────────────────────────────────────
 
     def has_lyrics(self) -> bool:
         return len(self._items) > 0
+
+    # ── Theme-aware chrome (mode button + empty label) ─────────
+
+    def _restyle_chrome(self) -> None:
+        """Re-apply theme colors to the mode button and empty label."""
+        _b, _f, _t, _d = get_theme_colors()
+        self._empty_label.setStyleSheet(
+            f"color: {_blend(_f, _b, 0.38)}; font-size: 15px; padding: 40px;"
+        )
+
+        btn_bg = _blend(_f, _b, 0.12)
+        btn_bg_hover = _blend(_f, _b, 0.20)
+        btn_border = _blend(_f, _b, 0.30)
+        self._mode_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background: {btn_bg}; color: {_blend(_f, _b, 0.70)};"
+            f"  border: 1px solid {btn_border}; border-radius: 6px;"
+            f"  padding: 3px 10px; font-size: 12px;"
+            f"}}"
+            f"QPushButton:hover {{ background: {btn_bg_hover}; }}"
+        )
+
+    def _on_theme_changed(self) -> None:
+        """Rebuild rows + chrome when the user switches theme."""
+        self._restyle_chrome()
+        self._rebuild()
 
     # ── Rebuild ────────────────────────────────────────────────
 

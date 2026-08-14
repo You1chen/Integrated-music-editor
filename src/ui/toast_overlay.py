@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .content_stack import get_theme_colors
+
 
 class ToastWidget(QFrame):
     """Single toast notification."""
@@ -29,29 +31,35 @@ class ToastWidget(QFrame):
             "success": ("#19cf86", "#0d6b45"),
             "warning": ("#fab81e", "#b8860b"),
         }
-        bg, border = colors.get(toast_type, colors["info"])
+        icon_color, bar_color = colors.get(toast_type, colors["info"])
+
+        _bg, fg, _theme, dark = get_theme_colors()
+        surface = "#1a1e24" if dark else "#ffffff"
+        muted = "#9aa1ab" if dark else "#6b7280"
 
         self.setStyleSheet(
-            f"background-color: #222; border-left: 4px solid {border};"
-            f" border-radius: 4px; padding: 8px 12px; margin: 4px;"
+            f"background-color: {surface};"
+            f" border: 1px solid {bar_color};"
+            f" border-left: 4px solid {bar_color};"
+            f" border-radius: 8px;"
         )
         self.setFixedWidth(300)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(10, 8, 10, 8)
 
         icons = {"info": "ℹ", "success": "✓", "warning": "⚠"}
         icon = QLabel(icons.get(toast_type, "ℹ"))
-        icon.setStyleSheet(f"color: {bg}; font-size: 16px; font-weight: bold;")
+        icon.setStyleSheet(f"color: {icon_color}; font-size: 16px; font-weight: bold;")
         layout.addWidget(icon)
 
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet("color: #eee;")
+        label.setStyleSheet(f"color: {fg};")
         layout.addWidget(label, stretch=1)
 
         close_btn = QLabel("✕")
-        close_btn.setStyleSheet("color: #888;")
+        close_btn.setStyleSheet(f"color: {muted};")
         close_btn.mousePressEvent = lambda ev: self.hide()
         layout.addWidget(close_btn)
 

@@ -38,13 +38,13 @@ from ..core.lrc_parser import (
     Fixed,
     convert_time_to_tag,
 )
-from .content_stack import is_dark_theme
+from .content_stack import is_dark_theme, theme_events
 from .synchronizer._ai_assist import (
     build_prompt_text,
     perform_pattern_matching,
     show_ai_assist_dialog,
 )
-from .synchronizer._helpers import _contrast_for_theme
+from .synchronizer._helpers import _contrast_for_theme, _rgba
 from .synchronizer._lyric_input import _LyricInput
 from .synchronizer._lyric_row import _LyricRow
 from .synchronizer._translation_row import _TranslationRow
@@ -116,6 +116,10 @@ class SynchronizerPage(QWidget):
 
         # Connect state changes
         self._mw.lrc_state.state_changed.connect(self._refresh_rows)
+
+        # Re-read theme colors when the user switches theme (rows cache
+        # their colors from update_state, which only runs on state_changed).
+        theme_events.changed.connect(self._refresh_rows)
 
         # Initial render
         self._rebuild_all()
@@ -1314,7 +1318,7 @@ class SynchronizerPage(QWidget):
             f"QPlainTextEdit {{"
             f"  color: {fg};"
             f"  font-size: 14px;"
-            f"  background-color: {theme_color}11;"
+            f"  background-color: {_rgba(theme_color, 0.07)};"
             f"  border: 1px solid {theme_color};"
             f"  border-radius: 4px;"
             f"  padding: 4px 8px;"
@@ -1322,7 +1326,7 @@ class SynchronizerPage(QWidget):
             f"}}"
             f"QPlainTextEdit:focus {{"
             f"  border-color: {theme_color};"
-            f"  background-color: {theme_color}22;"
+            f"  background-color: {_rgba(theme_color, 0.13)};"
             f"}}"
         )
 

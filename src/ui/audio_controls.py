@@ -488,6 +488,6 @@ def _big_slider_qss() -> str:
     }}
     QSlider::handle:horizontal:hover {{
         background: {theme};
-        border: 2px solid #ffffff66;
+        border: 2px solid rgba(255, 255, 255, 0.4);
     }}
     """

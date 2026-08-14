@@ -27,6 +27,9 @@ class FooterBar(QWidget):
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__(main_window)
         self.setObjectName("footerBar")
+        # Plain QWidget subclasses don't paint stylesheet backgrounds
+        # without this flag (the #footerBar surface colour would be lost).
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(80)
         self.setAcceptDrops(True)
 

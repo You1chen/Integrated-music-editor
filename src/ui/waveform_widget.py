@@ -19,6 +19,8 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QWidget
 
+from .content_stack import get_theme_colors
+
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
@@ -116,9 +118,14 @@ class WaveformWidget(QWidget):
         h = self.height()
         mid = h // 2
 
+        # Always read the live theme so the waveform follows the user's
+        # theme color (and light/dark mode) at runtime.
+        _bg, _fg, theme_hex, _dark = get_theme_colors()
+        theme = QColor(theme_hex)
+
         if self._samples is None or len(self._samples) == 0:
             # Draw flat line
-            painter.setPen(QPen(QColor("#888888"), 1))
+            painter.setPen(QPen(QColor(_fg), 1))
             painter.drawLine(0, mid, w, mid)
             painter.end()
             return
@@ -145,27 +152,31 @@ class WaveformWidget(QWidget):
             bot_path.lineTo(x, y)
         bot_path.lineTo(w, mid)
 
-        # Draw background waveform (grey)
+        # Draw background waveform (unplayed → muted foreground)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#88888844"))
+        unplayed = QColor(_fg)
+        unplayed.setAlpha(80)
+        painter.setBrush(unplayed)
         painter.drawPath(top_path)
         painter.drawPath(bot_path)
 
-        # Draw progress overlay (theme color)
+        # Draw progress overlay (played → theme color)
         if self._duration > 0:
             progress_x = int((self._value / self._duration) * w) if self._duration > 0 else 0
 
             painter.save()
             painter.setClipRect(0, 0, progress_x, h)
 
-            painter.setBrush(QColor(self._theme_color.red(), self._theme_color.green(), self._theme_color.blue(), 140))
+            played = QColor(theme)
+            played.setAlpha(150)
+            painter.setBrush(played)
             painter.drawPath(top_path)
             painter.drawPath(bot_path)
 
             painter.restore()
 
             # Draw cursor line
-            painter.setPen(QPen(self._theme_color, 2))
+            painter.setPen(QPen(theme, 2))
             painter.drawLine(progress_x, 0, progress_x, h)
 
         painter.end()

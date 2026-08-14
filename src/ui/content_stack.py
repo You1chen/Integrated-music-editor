@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QPalette, QColor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -38,9 +38,19 @@ DEFAULT_THEME_COLOR = "#f58ea8"  # pink
 # ── Shared theme state ─────────────────────────────────────
 
 _CURRENT_DARK: bool = False
-_CURRENT_BG: str = "#f1f3f4"
-_CURRENT_FG: str = "#111111"
+_CURRENT_BG: str = "#f5f6f8"
+_CURRENT_FG: str = "#1a1d23"
 _CURRENT_THEME_COLOR: str = DEFAULT_THEME_COLOR
+
+
+class _ThemeEvents(QObject):
+    """Broadcasts theme rebuilds so widgets with cached inline styles
+    (computed once from ``get_theme_colors()``) can re-polish themselves."""
+
+    changed = pyqtSignal()
+
+
+theme_events = _ThemeEvents()
 
 
 def is_dark_theme() -> bool:
@@ -57,6 +67,37 @@ def get_theme_colors() -> tuple[str, str, str, bool]:
     return _CURRENT_BG, _CURRENT_FG, _CURRENT_THEME_COLOR, _CURRENT_DARK
 
 
+# ── Color helpers ─────────────────────────────────────────
+
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    """Parse a ``#rrggbb`` color into an (r, g, b) tuple."""
+    color = color.lstrip("#")
+    return int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
+
+
+def _rgba(color: str, alpha: float) -> str:
+    """Return ``rgba(r, g, b, a)`` for a ``#rrggbb`` color.
+
+    Qt's QSS parser interprets 8-digit hex as ``#AARRGGBB`` (alpha first),
+    so ``"#f58ea8" + "33"`` would NOT mean "pink at 20% opacity" — it would
+    be parsed as alpha=0xf5 with a greenish RGB.  Always spell transparency
+    out as ``rgba()`` to avoid that trap.
+    """
+    r, g, b = _hex_to_rgb(color)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def _blend(hex_a: str, hex_b: str, weight: float) -> str:
+    """Mix two ``#rrggbb`` colors; *weight* 1.0 → pure *hex_a*."""
+    ra, ga, ba = _hex_to_rgb(hex_a)
+    rb, gb, bb = _hex_to_rgb(hex_b)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(ra * weight + rb * (1 - weight)),
+        int(ga * weight + gb * (1 - weight)),
+        int(ba * weight + bb * (1 - weight)),
+    )
+
+
 def apply_theme(prefs: dict) -> None:
     """Apply theme (color + dark/light mode) to the entire application."""
     app = QApplication.instance()
@@ -67,10 +108,7 @@ def apply_theme(prefs: dict) -> None:
     theme_mode = prefs.get("themeMode", ThemeMode.AUTO)
 
     # Parse theme color to RGB
-    hex_color = theme_color.lstrip("#")
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
+    r, g, b = _hex_to_rgb(theme_color)
 
     # Determine dark/light
     system_dark = False
@@ -87,11 +125,24 @@ def apply_theme(prefs: dict) -> None:
         (theme_mode == ThemeMode.AUTO and system_dark)
     )
 
-    # Build QSS stylesheet
-    bg = "#111111" if dark else "#f1f3f4"
-    fg = "#eeeeee" if dark else "#111111"
-    semi_bg = "#202020cc" if dark else "#e0e0e0cc"
-    contrast_text = "#111111" if _is_light_color(r, g, b) else "#eeeeee"
+    # ── Palette (design tokens) ─────────────────────────────
+    if dark:
+        bg = "#121417"
+        surface = "#1a1e24"
+        fg = "#e7e9ec"
+    else:
+        bg = "#f5f6f8"
+        surface = "#ffffff"
+        fg = "#1a1d23"
+
+    accent = theme_color
+    accent_contrast = "#111111" if _is_light_color(r, g, b) else "#eeeeee"
+    accent_soft = _rgba(accent, 0.16)       # subtle hover fill
+    accent_soft_strong = _rgba(accent, 0.30)
+    border = _rgba(fg, 0.12)                # hairline
+    border_strong = _rgba(fg, 0.22)         # visible border
+    muted = _blend(fg, bg, 0.55)            # secondary text
+    faint = _blend(fg, bg, 0.34)            # placeholder/hint text
 
     # Store for use by other modules
     global _CURRENT_DARK, _CURRENT_BG, _CURRENT_FG, _CURRENT_THEME_COLOR
@@ -100,325 +151,373 @@ def apply_theme(prefs: dict) -> None:
     _CURRENT_FG = fg
     _CURRENT_THEME_COLOR = theme_color
 
-    border_radius = "8px"
+    radius = "9px"
+    radius_sm = "6px"
 
     qss = f"""
-    /* Global */
+    /* ── Global ─────────────────────────────────────── */
     QWidget {{
         color: {fg};
         background-color: {bg};
-        font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+        font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
         font-size: 14px;
     }}
+    QLabel {{ background: transparent; }}
 
-    /* Header */
+    QToolTip {{
+        background-color: {surface};
+        color: {fg};
+        border: 1px solid {border_strong};
+        border-radius: {radius_sm};
+        padding: 5px 9px;
+    }}
+
+    /* ── Header ────────────────────────────────────── */
     #headerBar {{
-        background-color: {bg};
-        border-bottom: 2px solid {theme_color};
-        padding: 4px 8px;
+        background-color: {surface};
+        border-bottom: 1px solid {border};
+        padding: 4px 10px;
     }}
     #appTitle {{
-        font-size: 18px;
-        font-weight: bold;
-        color: {theme_color};
+        font-size: 17px;
+        font-weight: 700;
+        color: {accent};
+        padding: 0 8px;
     }}
     #navTab {{
         padding: 6px 14px;
         border: none;
-        border-radius: {border_radius};
+        border-radius: {radius};
         background: transparent;
-        color: {fg};
+        color: {muted};
         font-size: 14px;
     }}
     #navTab:hover {{
-        background-color: {theme_color};
-        color: {contrast_text};
+        background-color: {accent_soft};
+        color: {fg};
     }}
     #navTab:checked {{
-        background-color: {theme_color};
-        color: {"#111111" if _is_light_color(r, g, b) else "#eeeeee"};
+        background-color: {accent};
+        color: {accent_contrast};
+        font-weight: 600;
     }}
 
-    /* Footer */
+    /* ── Footer ────────────────────────────────────── */
     #footerBar {{
-        background-color: {semi_bg};
-        border-top: 1px solid {theme_color};
-        padding: 4px 8px;
+        background-color: {surface};
+        border-top: 1px solid {border};
+        padding: 4px 10px;
     }}
 
-    /* Audio Controls */
+    /* ── Audio Controls ────────────────────────────── */
     #audioButton {{
         border: none;
         background: transparent;
         color: {fg};
         padding: 4px 8px;
-        border-radius: {border_radius};
+        border-radius: {radius};
+        font-size: 15px;
     }}
     #audioButton:hover {{
-        background-color: {theme_color};
-        color: {contrast_text};
+        background-color: {accent_soft};
+        color: {fg};
+    }}
+    #audioButton:pressed {{
+        background-color: {accent};
+        color: {accent_contrast};
     }}
     #audioButton:disabled {{
-        opacity: 0.5;
+        color: {faint};
     }}
 
     /* ── Buttons (generic) ─────────────────────────── */
     QPushButton {{
-        border: 1px solid {fg}33;
-        border-radius: {border_radius};
+        border: 1px solid {border_strong};
+        border-radius: {radius};
         padding: 6px 14px;
-        background: transparent;
+        background-color: {surface};
         color: {fg};
     }}
     QPushButton:hover {{
-        background-color: {theme_color};
-        color: {contrast_text};
-        border-color: {theme_color};
+        background-color: {accent};
+        color: {accent_contrast};
+        border-color: {accent};
     }}
     QPushButton:pressed {{
-        background-color: {theme_color};
-        color: {contrast_text};
+        background-color: {accent};
+        color: {accent_contrast};
+        border-color: {accent};
     }}
     QPushButton:checked {{
-        background-color: {theme_color};
-        color: {"#111111" if _is_light_color(r, g, b) else "#eeeeee"};
-        border-color: {theme_color};
+        background-color: {accent};
+        color: {accent_contrast};
+        border-color: {accent};
+        font-weight: 600;
+    }}
+    QPushButton:disabled {{
+        color: {faint};
+        border-color: {border};
+        background-color: transparent;
+    }}
+    QPushButton:default {{
+        border: 2px solid {accent};
+        font-weight: 600;
+    }}
+
+    /* ── Inputs ────────────────────────────────────── */
+    QLineEdit, QPlainTextEdit, QTextEdit, QComboBox,
+    QSpinBox, QDoubleSpinBox {{
+        border: 1px solid {border_strong};
+        border-radius: {radius};
+        padding: 5px 10px;
+        background-color: {surface};
+        color: {fg};
+        selection-background-color: {accent};
+        selection-color: {accent_contrast};
+    }}
+    QLineEdit:hover, QPlainTextEdit:hover, QTextEdit:hover,
+    QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {{
+        border-color: {accent};
+    }}
+    QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
+    QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+        border-color: {accent};
+    }}
+    QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled {{
+        color: {faint};
+        border-color: {border};
     }}
 
     /* ── Sliders ───────────────────────────────────── */
     QSlider::groove:horizontal {{
-        height: 4px;
-        background: {fg};
+        height: 5px;
+        background: {border};
+        border-radius: 2px;
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {accent};
+        border-radius: 2px;
+    }}
+    QSlider::add-page:horizontal {{
+        background: {border};
         border-radius: 2px;
     }}
     QSlider::handle:horizontal {{
-        width: 16px;
-        height: 16px;
-        margin: -6px 0;
-        border-radius: 8px;
-        background: {theme_color};
+        width: 14px;
+        height: 14px;
+        margin: -5px 0;
+        border-radius: 7px;
+        background: {accent};
+        border: 2px solid {surface};
     }}
     QSlider::handle:horizontal:hover {{
-        background: {theme_color};
-        border: 2px solid #ffffff66;
+        background: {accent};
+        border: 2px solid {accent_contrast};
     }}
-    QSlider::sub-page:horizontal {{
-        background: {theme_color};
-        border-radius: 2px;
+    QSlider::handle:horizontal:pressed {{
+        background: {accent};
+        border: 2px solid {accent_contrast};
     }}
 
-    /* ── ComboBox ──────────────────────────────────── */
-    QComboBox {{
-        border: 1px solid {fg}33;
-        border-radius: {border_radius};
-        padding: 4px 10px;
-        background: transparent;
-    }}
-    QComboBox:hover {{
-        border-color: {theme_color};
-    }}
+    /* ── ComboBox drop-down ────────────────────────── */
     QComboBox::drop-down {{
         border: none;
         width: 24px;
     }}
     QComboBox QAbstractItemView {{
-        background: {bg};
+        background: {surface};
         color: {fg};
-        border: 1px solid {fg}33;
-        border-radius: 4px;
-        selection-background-color: {theme_color};
-        selection-color: {contrast_text};
+        border: 1px solid {border_strong};
+        border-radius: {radius_sm};
+        padding: 4px;
+        selection-background-color: {accent};
+        selection-color: {accent_contrast};
+        outline: none;
+    }}
+    QComboBox QAbstractItemView::item {{
+        padding: 6px 10px;
+        border-radius: {radius_sm};
     }}
     QComboBox QAbstractItemView::item:hover {{
-        background-color: {theme_color};
-        color: {contrast_text};
+        background-color: {accent_soft};
+        color: {fg};
     }}
 
-    /* ── SpinBox ───────────────────────────────────── */
-    QSpinBox {{
-        border: 1px solid {fg}33;
-        border-radius: {border_radius};
-        padding: 4px 8px;
+    /* ── SpinBox buttons ───────────────────────────── */
+    QSpinBox::up-button, QDoubleSpinBox::up-button,
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
         background: transparent;
+        border: none;
+        width: 18px;
     }}
-    QSpinBox:hover {{
-        border-color: {theme_color};
-    }}
-    QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
-        background-color: {theme_color};
-    }}
-
-    /* ── LineEdit ──────────────────────────────────── */
-    QLineEdit {{
-        border: 1px solid {fg}33;
-        border-radius: {border_radius};
-        padding: 4px 8px;
-        background: transparent;
-    }}
-    QLineEdit:hover {{
-        border-color: {theme_color};
-    }}
-    QLineEdit:focus {{
-        border-color: {theme_color};
+    QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+    QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+        background-color: {accent_soft};
     }}
 
     /* ── Tab Widget ────────────────────────────────── */
+    QTabWidget::pane {{
+        border: 1px solid {border};
+        border-radius: {radius};
+        top: -1px;
+    }}
     QTabBar::tab {{
         border: 1px solid transparent;
-        border-radius: {border_radius};
+        border-radius: {radius};
         padding: 6px 16px;
         margin: 2px;
+        color: {muted};
     }}
     QTabBar::tab:hover {{
-        background-color: {theme_color};
-        color: {contrast_text};
-        border-color: {theme_color};
+        background-color: {accent_soft};
+        color: {fg};
     }}
     QTabBar::tab:selected {{
-        background-color: {theme_color};
-        color: {contrast_text};
-        border-color: {theme_color};
+        background-color: {accent};
+        color: {accent_contrast};
     }}
 
-    /* ── Menu ─────────────────────────────────────── */
+    /* ── Menu ──────────────────────────────────────── */
     QMenu {{
-        background: {bg};
+        background: {surface};
         color: {fg};
-        border: 1px solid {fg}33;
-        border-radius: 4px;
+        border: 1px solid {border_strong};
+        border-radius: {radius_sm};
         padding: 4px;
     }}
     QMenu::item {{
-        padding: 6px 24px;
-        border-radius: 3px;
+        padding: 7px 22px;
+        border-radius: {radius_sm};
     }}
     QMenu::item:selected {{
-        background: {theme_color};
-        color: {contrast_text};
+        background: {accent};
+        color: {accent_contrast};
+    }}
+    QMenu::item:disabled {{
+        color: {faint};
     }}
     QMenu::separator {{
         height: 1px;
-        background: {fg}22;
+        background: {border};
         margin: 4px 8px;
     }}
 
     /* ── GroupBox ──────────────────────────────────── */
     QGroupBox {{
-        border: 1px solid {fg}22;
-        border-radius: {border_radius};
+        border: 1px solid {border};
+        border-radius: {radius};
         margin-top: 12px;
         padding-top: 16px;
-        font-weight: bold;
+        font-weight: 600;
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
         left: 12px;
         padding: 0 6px;
+        color: {muted};
     }}
 
-    /* ── Collapsible header ───────────────────────── */
+    /* ── Collapsible header ────────────────────────── */
     #collapsibleHeader {{
         text-align: left;
         font-size: 13px;
-        font-weight: bold;
+        font-weight: 600;
         color: {fg};
-        background: {semi_bg};
-        border: 1px solid {fg}22;
-        border-radius: {border_radius};
-        padding: 6px 10px;
+        background: {surface};
+        border: 1px solid {border};
+        border-radius: {radius};
+        padding: 8px 12px;
     }}
     #collapsibleHeader:hover {{
-        background: {theme_color};
-        color: {contrast_text};
-        border-color: {theme_color};
+        background: {accent_soft};
+        color: {fg};
+        border-color: {accent};
     }}
 
-    /* Home page sync button */
-    #homeSyncButton {{
-        text-align: left;
-        padding: 8px 16px;
-        border-radius: {border_radius};
-    }}
-
-    /* Editor */
-    #editorArea {{
-        border: 1px solid {theme_color};
-        border-radius: {border_radius};
-        background: transparent;
-        font-size: 15px;
-        padding: 8px;
-    }}
-
-    /* Synchronizer */
-    #lyricList {{
-        background: transparent;
-        border: none;
-        outline: none;
-        font-size: 16px;
-    }}
-    #lyricList::item {{
-        padding: 8px 8px 8px 100px;
-        border-top: 2px solid transparent;
-        border-bottom: 2px solid transparent;
-    }}
-    #lyricList::item:nth-child(even) {{
-        background-color: {"#00000022" if dark else "#ffffff22"};
-    }}
-    #lyricList::item:nth-child(odd) {{
-        background-color: {"#ffffff22" if dark else "#00000022"};
-    }}
-    #lyricList::item:selected {{
-        background-color: {theme_color};
-        border-color: {theme_color};
-        border-top: 2px solid {theme_color};
-        border-bottom: 2px solid {theme_color};
-    }}
-
-    /* Toast */
-    #toastInfo {{
-        border-left: 4px solid #91d2fa;
-    }}
-    #toastSuccess {{
-        border-left: 4px solid #19cf86;
-    }}
-    #toastWarning {{
-        border-left: 4px solid #fab81e;
-    }}
-
-    /* Preferences */
-    #prefList::item {{
-        padding: 8px 16px;
-    }}
-
-    /* Checkboxes — ensure indicator (box) is always visible */
-    QCheckBox::indicator {{
+    /* ── Checkboxes / Radios ───────────────────────── */
+    QCheckBox {{ spacing: 8px; }}
+    QRadioButton {{ spacing: 8px; }}
+    QCheckBox::indicator, QRadioButton::indicator {{
         width: 18px;
         height: 18px;
-        border: 2px solid {fg};
-        border-radius: 3px;
+        border: 2px solid {border_strong};
+        border-radius: 5px;
+        background: {surface};
+    }}
+    QRadioButton::indicator {{ border-radius: 9px; }}
+    QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+        border-color: {accent};
+    }}
+    QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+        background-color: {accent};
+        border-color: {accent};
+    }}
+    QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+        border-color: {border};
         background: transparent;
-    }}
-    QCheckBox::indicator:checked {{
-        background-color: {theme_color};
-        border-color: {theme_color};
-    }}
-    QCheckBox::indicator:hover {{
-        border-color: {theme_color};
     }}
 
-    /* Scroll bars */
+    /* ── Scroll bars ───────────────────────────────── */
     QScrollBar:vertical {{
-        width: 8px;
+        width: 10px;
         background: transparent;
+        margin: 2px;
     }}
     QScrollBar::handle:vertical {{
-        background: {theme_color};
+        background: {border_strong};
         border-radius: 4px;
         min-height: 30px;
+    }}
+    QScrollBar::handle:vertical:hover {{
+        background: {accent};
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
     }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: transparent;
+    }}
+    QScrollBar:horizontal {{
+        height: 10px;
+        background: transparent;
+        margin: 2px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {border_strong};
+        border-radius: 4px;
+        min-width: 30px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background: {accent};
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        width: 0;
+    }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        background: transparent;
+    }}
+
+    /* ── Scroll area / editor ──────────────────────── */
+    QScrollArea {{ border: none; background: transparent; }}
+    QScrollArea > QWidget > QWidget {{ background: transparent; }}
+    #editorArea {{
+        border: 1px solid {accent};
+        border-radius: {radius};
+        background: transparent;
+        font-size: 14px;
+        padding: 8px;
+    }}
+
+    /* ── Synchronizer ──────────────────────────────── */
+    #lyricList {{
+        background: transparent;
+        border: none;
+    }}
+
+    /* ── Toast (left accent bar colors) ────────────── */
+    #toastInfo {{ border-left: 4px solid #91d2fa; }}
+    #toastSuccess {{ border-left: 4px solid #19cf86; }}
+    #toastWarning {{ border-left: 4px solid #fab81e; }}
     """
 
     app.setStyleSheet(qss)
@@ -427,16 +526,21 @@ def apply_theme(prefs: dict) -> None:
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor(bg))
     palette.setColor(QPalette.ColorRole.WindowText, QColor(fg))
-    palette.setColor(QPalette.ColorRole.Base, QColor(bg))
+    palette.setColor(QPalette.ColorRole.Base, QColor(surface))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(bg))
     palette.setColor(QPalette.ColorRole.Text, QColor(fg))
-    palette.setColor(QPalette.ColorRole.Button, QColor(bg))
+    palette.setColor(QPalette.ColorRole.Button, QColor(surface))
     palette.setColor(QPalette.ColorRole.ButtonText, QColor(fg))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor(theme_color))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(accent))
     palette.setColor(
         QPalette.ColorRole.HighlightedText,
         QColor("#111111" if _is_light_color(r, g, b) else "#eeeeee"),
     )
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(faint))
     app.setPalette(palette)
+
+    # Let widgets that cache inline styles re-read the new theme colors.
+    theme_events.changed.emit()
 
 
 def _is_light_color(r: int, g: int, b: int) -> bool:

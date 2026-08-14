@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .content_stack import _CURRENT_THEME_COLOR, _CURRENT_DARK
+from .content_stack import _CURRENT_THEME_COLOR, _CURRENT_DARK, _rgba
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -395,9 +395,9 @@ class _SongRow(QWidget):
     def _apply_bg(self) -> None:
         if self._hover:
             theme = _CURRENT_THEME_COLOR
-            alpha = "33" if _CURRENT_DARK else "22"
+            alpha = 0.20 if _CURRENT_DARK else 0.13
             self.setStyleSheet(
-                f"background-color: {theme}{alpha}; border-radius: 6px;"
+                f"background-color: {_rgba(theme, alpha)}; border-radius: 6px;"
             )
         else:
             self.setStyleSheet("background: transparent;")

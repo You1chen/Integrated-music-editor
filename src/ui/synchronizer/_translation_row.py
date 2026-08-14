@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.lrc_parser import LyricLine
+from ._helpers import _rgba
 
 
 class _TranslationRow(QFrame):
@@ -109,7 +110,7 @@ class _TranslationRow(QFrame):
             f"  color: {theme};"
             f"  background: transparent;"
             f"  border: none;"
-            f"  border-bottom: 1px dashed {fg}22;"
+            f"  border-bottom: 1px dashed {_rgba(fg, 0.13)};"
             f"  font-size: 13px;"
             f"  font-style: italic;"
             f"  padding: 2px 4px;"

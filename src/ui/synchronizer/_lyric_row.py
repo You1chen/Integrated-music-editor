@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.lrc_parser import Fixed, LyricLine, convert_time_to_tag, format_text
-from ._helpers import _contrast_for_theme
+from ._helpers import _contrast_for_theme, _rgba
 
 
 class _TimeButton(QPushButton):
@@ -441,8 +441,8 @@ class _LyricRow(QFrame):
             btn_style = (
                 f"QPushButton {{"
                 f"  background-color: transparent;"
-                f"  color: {fg}44;"
-                f"  border: 1px dashed {fg}22;"
+                f"  color: {_rgba(fg, 0.27)};"
+                f"  border: 1px dashed {_rgba(fg, 0.13)};"
                 f"  border-radius: 4px;"
                 f"  font-family: monospace;"
                 f"  font-size: 12px;"

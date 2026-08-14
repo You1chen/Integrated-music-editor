@@ -19,9 +19,10 @@ import os
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QMessageBox,
     QPushButton,
@@ -33,6 +34,7 @@ from PyQt6.QtWidgets import (
 import mutagen
 from mutagen.id3 import APIC, ID3
 
+from .content_stack import get_theme_colors, theme_events
 from .lyric_axis_widget import LyricAxisWidget
 
 if TYPE_CHECKING:
@@ -91,20 +93,19 @@ class HomePage(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._cover_btn.setStyleSheet(f"""
-            QPushButton#homeCover {{
-                border: none;
-                border-radius: {self.COVER_RADIUS}px;
-                background-color: transparent;
-                font-size: 13px;
-                color: #888888;
-            }}
-            QPushButton#homeCover:hover {{
-                background-color: rgba(255,255,255,8);
-            }}
-        """)
+
+        # A soft drop shadow lifts the cover off the page (theme-independent).
+        shadow = QGraphicsDropShadowEffect(self._cover_btn)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 45))
+        self._cover_btn.setGraphicsEffect(shadow)
+
         self._cover_btn.clicked.connect(self._on_browse_cover)
         cover_wrap.addWidget(self._cover_btn)
+
+        self._restyle_cover()
+        theme_events.changed.connect(self._restyle_cover)
 
         # ── Right: lyrics axis ───────────────────────────────
         self._lyric_axis = LyricAxisWidget(main_window)
@@ -115,6 +116,28 @@ class HomePage(QWidget):
 
         # Initial load
         self._load_cover()
+
+    # ── Cover: theme-aware card styling ──────────────────────────
+
+    def _restyle_cover(self) -> None:
+        """Restyle the cover card from the live theme (called on theme change)."""
+        _bg, _fg, theme, dark = get_theme_colors()
+        surface = "#1a1e24" if dark else "#ffffff"
+        muted = "#9aa1ab" if dark else "#8a9099"
+        border = "rgba(255,255,255,0.14)" if dark else "rgba(0,0,0,0.10)"
+        self._cover_btn.setStyleSheet(f"""
+            QPushButton#homeCover {{
+                border: 1px solid {border};
+                border-radius: {self.COVER_RADIUS}px;
+                background-color: {surface};
+                font-size: 13px;
+                color: {muted};
+            }}
+            QPushButton#homeCover:hover {{
+                border: 1px solid {theme};
+                background-color: {surface};
+            }}
+        """)
 
     # ── Audio path helper ────────────────────────────────────────
 

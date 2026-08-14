@@ -25,6 +25,9 @@ class HeaderBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("headerBar")
+        # Plain QWidget subclasses don't paint stylesheet backgrounds
+        # without this flag (the #headerBar surface colour would be lost).
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(48)
 
         layout = QHBoxLayout(self)
