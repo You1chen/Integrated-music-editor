@@ -513,6 +513,11 @@ def apply_theme(prefs: dict) -> None:
         background: transparent;
         border: none;
     }}
+
+    /* ── Toast (left accent bar colors) ────────────── */
+    #toastInfo {{ border-left: 4px solid #91d2fa; }}
+    #toastSuccess {{ border-left: 4px solid #19cf86; }}
+    #toastWarning {{ border-left: 4px solid #fab81e; }}
     """
 
     app.setStyleSheet(qss)

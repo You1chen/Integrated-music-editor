@@ -420,14 +420,14 @@ class SongInfoDialog(QDialog):
     def _on_save_meta(self) -> None:
         values = {key: inp.text() for key, inp in self._inputs.items()}
         if not os.path.isfile(self._path):
-            print("音频文件不存在")
+            self._mw.toast_overlay.show_toast("warning", "音频文件不存在")
             return
         if _write_tags(self._path, values):
-            print("元信息已保存")
+            self._mw.toast_overlay.show_toast("success", "元信息已保存")
             self._refresh_playlist()
             self._invalidate_meta_page()
         else:
-            print("元信息保存失败")
+            self._mw.toast_overlay.show_toast("warning", "元信息保存失败")
 
     def _on_save_lyric(self) -> None:
         if not self._path:
@@ -442,9 +442,9 @@ class SongInfoDialog(QDialog):
             with open(lrc_path, "w", encoding="utf-8") as f:
                 f.write(text)
         except OSError as e:
-            print(f"歌词保存失败：{e}")
+            self._mw.toast_overlay.show_toast("warning", f"歌词保存失败：{e}")
             return
-        print("歌词已保存")
+        self._mw.toast_overlay.show_toast("success", "歌词已保存")
         self._refresh_playlist()
 
         # If this song is the one currently loaded, refresh the in-memory

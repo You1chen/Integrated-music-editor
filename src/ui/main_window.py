@@ -27,6 +27,7 @@ from ..core.playlist_manager import PlaylistManager
 from .content_stack import ContentStack
 from .footer_bar import FooterBar
 from .header_bar import HeaderBar
+from .toast_overlay import ToastOverlay
 
 
 class MainWindow(QMainWindow):
@@ -114,6 +115,10 @@ class MainWindow(QMainWindow):
         # Footer (audio controls)
         self.footer_bar = FooterBar(self)
         layout.addWidget(self.footer_bar)
+
+        # Toast overlay (positioned absolutely at top-right) — used by the
+        # lyrics editor and the metadata editor for visible feedback.
+        self.toast_overlay = ToastOverlay(self)
 
         # ── Conect Signals ──────────────────────────────────
         self._connect_signals()

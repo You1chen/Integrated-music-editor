@@ -875,12 +875,16 @@ def _generate_and_copy_prompt(
     """Generate the AI translation prompt and copy to clipboard."""
     result = build_prompt_text(sync_page)
     if result is None:
-        print("没有可用的歌词正文（需要带时间戳的歌词行）")
+        sync_page._mw.toast_overlay.show_toast(
+            "warning", "没有可用的歌词正文（需要带时间戳的歌词行）"
+        )
         return
 
     prompt, line_count = result
     QApplication.clipboard().setText(prompt)
-    print(f"提示词已复制到剪贴板（共 {line_count} 行歌词）")
+    sync_page._mw.toast_overlay.show_toast(
+        "success", f"提示词已复制到剪贴板（共 {line_count} 行歌词）"
+    )
 
 
 # ── Pattern Matching ───────────────────────────────────────────────
@@ -1001,7 +1005,9 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
             dots_timer.stop()
             progress.accept()
             progress.deleteLater()
-            print("未找到匹配的翻译文本")
+            sync_page._mw.toast_overlay.show_toast(
+                "warning", "未找到匹配的翻译文本"
+            )
             return
 
         theme_color = prefs.get("themeColor", "#f58ea8")
@@ -1017,7 +1023,9 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
                 progress.accept()
                 progress.deleteLater()
                 state.state_changed.emit()
-                print(f"成功匹配 {_count[0]} 条翻译")
+                sync_page._mw.toast_overlay.show_toast(
+                    "success", f"成功匹配 {_count[0]} 条翻译"
+                )
                 return
 
             idx, text = _queue.pop(0)
