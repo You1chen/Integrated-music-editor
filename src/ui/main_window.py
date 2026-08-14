@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         self.keybinding_manager = KeyBindingManager(
             user_overrides=self.config.get_keybindings()
         )
-        self.playlist = PlaylistManager(self.audio_manager, self)
+        self.playlist = PlaylistManager(self.audio_manager, self.config, self)
 
         # Playback-mode lock for the lyrics-editing page.
         self._sync_active = False

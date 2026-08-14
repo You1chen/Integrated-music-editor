@@ -35,9 +35,15 @@ class PlaylistManager(QObject):
     current_changed = pyqtSignal(int)
     mode_changed = pyqtSignal(PlayMode)
 
-    def __init__(self, audio_manager: "AudioManager", parent: Optional[QObject] = None) -> None:
+    def __init__(
+        self,
+        audio_manager: "AudioManager",
+        config=None,
+        parent: Optional[QObject] = None,
+    ) -> None:
         super().__init__(parent)
         self._am = audio_manager
+        self._config = config
         self._queue: list[dict] = []
         self._current_index: int = -1
         self._mode: PlayMode = PlayMode.SINGLE
@@ -151,6 +157,10 @@ class PlaylistManager(QObject):
             return
         self._current_index = index
         self._am.set_source(QUrl.fromLocalFile(path).toString())
+        # Keep "last played mp3" in sync so saving lyrics targets THIS song,
+        # not whatever was loaded first (张冠李戴 guard relies on this).
+        if self._config is not None and hasattr(self._config, "remember_mp3_path"):
+            self._config.remember_mp3_path(path)
         self._connect_autoplay()
         self._emit_all()
 
