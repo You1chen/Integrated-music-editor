@@ -18,6 +18,7 @@ lrc-maker.exe
 launcher.c
 PROGRESS.md
 STRUCTURE.md
+principle.txt
 
 # Test / debug scripts
 test.py

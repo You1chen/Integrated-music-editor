@@ -340,12 +340,6 @@ def apply_theme(prefs: dict) -> None:
         border-radius: {border_radius};
     }}
 
-    /* Load audio file button */
-    #loadAudioFileBtn {{
-        padding: 10px 20px;
-        font-size: 14px;
-    }}
-
     /* Editor */
     #editorArea {{
         border: 1px solid {theme_color};

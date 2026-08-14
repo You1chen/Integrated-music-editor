@@ -10,11 +10,13 @@ import math
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QActionGroup
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSlider,
     QVBoxLayout,
@@ -22,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.audio_manager import AudioState, AudioStateData
+from ..core.constants import PLAY_MODE_LABELS, PLAY_MODE_ORDER, PlayMode
 from ..core.lrc_parser import Fixed, convert_time_to_tag, guard
 from .content_stack import get_theme_colors
 
@@ -57,13 +60,21 @@ class AudioControls(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
 
-        # ── Load Audio Button ───────────────────────────
-        self._load_btn = QPushButton("🎵")
-        self._load_btn.setObjectName("audioButton")
-        self._load_btn.setToolTip("加载音频")
-        self._load_btn.setFixedSize(36, 32)
-        self._load_btn.clicked.connect(self._on_load_audio)
-        layout.addWidget(self._load_btn)
+        # ── Playlist Button (far left) ──────────────────
+        self._playlist_btn = QPushButton("播放列表")
+        self._playlist_btn.setObjectName("audioButton")
+        self._playlist_btn.setToolTip("打开播放列表")
+        self._playlist_btn.setFixedHeight(32)
+        self._playlist_btn.clicked.connect(self._on_open_playlist)
+        layout.addWidget(self._playlist_btn)
+
+        # ── Playback Mode Button (replaces 加载音频) ────
+        self._mode_btn = QPushButton(PLAY_MODE_LABELS[PlayMode.SINGLE])
+        self._mode_btn.setObjectName("audioButton")
+        self._mode_btn.setToolTip("选择播放模式")
+        self._mode_btn.setFixedHeight(32)
+        self._mode_btn.clicked.connect(self._on_mode_clicked)
+        layout.addWidget(self._mode_btn)
 
         # ── Replay 5s ───────────────────────────────────
         self._replay_btn = QPushButton("⏮")
@@ -205,10 +216,39 @@ class AudioControls(QWidget):
 
     # ── Internal Handlers ───────────────────────────────────
 
-    def _on_load_audio(self) -> None:
-        from .load_audio_dialog import LoadAudioDialog
-        dialog = LoadAudioDialog(self._mw)
-        dialog.exec()
+    def _on_open_playlist(self) -> None:
+        self._mw.open_playlist_panel()
+
+    def _on_mode_clicked(self) -> None:
+        """Open a menu so the user picks a playback mode freely."""
+        menu = QMenu(self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        current = self._mw.playlist.mode
+        for mode in PLAY_MODE_ORDER:
+            action = menu.addAction(PLAY_MODE_LABELS[mode])
+            action.setCheckable(True)
+            action.setChecked(mode == current)
+            action.triggered.connect(
+                lambda checked=False, m=mode: self._on_mode_selected(m)
+            )
+            group.addAction(action)
+
+        menu.exec(self._mode_btn.mapToGlobal(
+            self._mode_btn.rect().bottomLeft()
+        ))
+
+    def _on_mode_selected(self, mode: PlayMode) -> None:
+        self._mw.set_play_mode(mode)
+
+    def update_mode_label(self, mode: PlayMode) -> None:
+        """Refresh the mode button text after the mode changes."""
+        self._mode_btn.setText(PLAY_MODE_LABELS.get(mode, PLAY_MODE_LABELS[PlayMode.SINGLE]))
+
+    def set_mode_lock(self, locked: bool) -> None:
+        """Disable mode switching while lyrics are being edited."""
+        self._mode_btn.setEnabled(not locked)
 
     def _on_replay(self) -> None:
         self._mw.audio_manager.step({}, -5)

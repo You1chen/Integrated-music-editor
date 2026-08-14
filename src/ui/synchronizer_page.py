@@ -828,11 +828,6 @@ class SynchronizerPage(QWidget):
             self._on_translate_toggle()
             return
 
-        elif action == InputAction.LOAD_AUDIO:
-            event.accept()
-            self._mw.footer_bar.audio_controls._on_load_audio()
-            return
-
         elif action == InputAction.DELETE_LINES:
             event.accept()
             self._on_delete_selected()

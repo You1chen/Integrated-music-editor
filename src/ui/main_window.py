@@ -19,10 +19,11 @@ from PyQt6.QtWidgets import (
 
 from ..core.audio_manager import AudioManager, AudioState, AudioStateData
 from ..core.config_manager import ConfigManager
-from ..core.constants import InputAction, PageRoute, SyncMode
+from ..core.constants import InputAction, PageRoute, PlayMode, SyncMode
 from ..core.keybinding import KeyBindingManager
 from ..core.lrc_parser import FormatOptions, Fixed, TrimOptions
 from ..core.lrc_state import LrcStateManager
+from ..core.playlist_manager import PlaylistManager
 from .content_stack import ContentStack
 from .footer_bar import FooterBar
 from .header_bar import HeaderBar
@@ -48,6 +49,12 @@ class MainWindow(QMainWindow):
         self.keybinding_manager = KeyBindingManager(
             user_overrides=self.config.get_keybindings()
         )
+        self.playlist = PlaylistManager(self.audio_manager, self)
+
+        # Playback-mode lock for the lyrics-editing page.
+        self._sync_active = False
+        self._saved_play_mode: PlayMode = PlayMode.SINGLE
+        self._playlist_panel = None
 
         # Guard against _save_state re-creating draft during close
         self._closing = False
@@ -405,6 +412,9 @@ class MainWindow(QMainWindow):
         # Content stack notifies when synchronizer page is shown/hidden
         self.content_stack.sync_page_active_changed.connect(self._on_sync_page_changed)
 
+        # Play mode → footer mode label
+        self.playlist.mode_changed.connect(self._on_play_mode_changed)
+
     def _on_audio_state_changed(self, data: AudioStateData) -> None:
         self.footer_bar.update_audio_state(data)
 
@@ -477,6 +487,13 @@ class MainWindow(QMainWindow):
             self.audio_manager.current_time_changed.connect(
                 self.lrc_state.refresh
             )
+            # Lock playback mode to single-play while editing lyrics so a
+            # song can never auto-advance under the user mid-edit.  Position
+            # and rate are untouched — only the end-of-media behaviour is
+            # held to "play this one song and stop".
+            self._sync_active = True
+            self._saved_play_mode = self.playlist.mode
+            self.playlist.set_mode(PlayMode.SINGLE)
         else:
             # Disconnect when leaving sync page
             try:
@@ -485,12 +502,64 @@ class MainWindow(QMainWindow):
                 )
             except TypeError:
                 pass  # Not connected
+            # Restore the mode the user had before entering the lyrics page.
+            self._sync_active = False
+            self.playlist.set_mode(self._saved_play_mode)
+
+        controls = self.footer_bar.audio_controls
+        if controls is not None:
+            controls.set_mode_lock(active)
+
+    def _on_play_mode_changed(self, mode: PlayMode) -> None:
+        controls = self.footer_bar.audio_controls
+        if controls is not None:
+            controls.update_mode_label(mode)
 
     def _save_select_index(self) -> None:
         """Persist the current select_index (lightweight, no draft)."""
         if self._closing or self._restoring_draft:
             return
         self.config.set_select_index(self.lrc_state.select_index)
+
+    # ── Play queue / playback-mode API ────────────────────────
+
+    def set_play_mode(self, mode: PlayMode) -> None:
+        """Set the playback mode (from the footer mode menu)."""
+        self.playlist.set_mode(mode)
+
+    def open_playlist_panel(self) -> None:
+        """Open (or re-show) the play-queue panel."""
+        if self._playlist_panel is None:
+            from .playlist_panel import PlaylistPanel
+            self._playlist_panel = PlaylistPanel(self)
+        self._playlist_panel.show()
+        self._playlist_panel.raise_()
+        self._playlist_panel.activateWindow()
+
+    def import_to_playlist(self, songs: list[dict]) -> None:
+        """Add songs to the queue; start playing when the queue was empty."""
+        if not songs:
+            return
+        if not self.playlist.queue:
+            self.playlist.set_queue(songs)
+            self.playlist.play_index(0)
+        else:
+            self.playlist.add_songs(songs)
+
+    def import_playlist_from_library(self) -> None:
+        """Import the whole media library in natural order (panel button)."""
+        playlist_page = self.content_stack._pages.get(PageRoute.PLAYLIST)
+        if playlist_page is None or not getattr(playlist_page, "_all_songs", []):
+            self.toast_overlay.show_toast(
+                "warning", "歌单为空，请先在「歌单」页扫描文件夹"
+            )
+            return
+        songs = playlist_page.get_all_songs()
+        self.playlist.set_queue(songs)
+        self.playlist.play_index(0)
+        self.toast_overlay.show_toast(
+            "success", f"已导入 {len(songs)} 首到播放列表"
+        )
 
     # ── Public Helpers ──────────────────────────────────────
 
@@ -545,10 +614,10 @@ class MainWindow(QMainWindow):
 
         # ── Steps ──
         for text in [
-            "1. 🎵 加载音频：点击左下角 🎵 按钮，或把文件直接拖进窗口",
-            "2. ▶ 播放控制：空格键全局播放/暂停，← → 快进快退 5 秒",
-            "3. 📝 歌词制作：在「歌词制作」页导入歌词，播放中按空格打时间戳",
-            "4. 🗂 歌单媒体库：在「歌单」页选择文件夹，扫描成树状歌单，点击即播",
+            "1. 🗂 歌单媒体库：在「歌单」页选择文件夹，扫描成树状歌单",
+            "2. 📃 播放列表：把歌单导入播放列表，点击底部左侧「播放列表」查看",
+            "3. ▶ 播放控制：空格键播放/暂停，← → 快进快退 5 秒，底部切换播放模式",
+            "4. 📝 歌词制作：在「歌词制作」页导入歌词，播放中按空格打时间戳",
             "5. 🏷 编辑元信息：改标题/歌手/封面，甚至重命名音频文件",
             "6. ⚙ 偏好与快捷键：全部可在「设置」页自定义",
         ]:
@@ -688,20 +757,27 @@ class MainWindow(QMainWindow):
         _, lay_flow = _make_tab("使用流程")
         steps = [
             ("① 载入歌曲",
-             "点击左下角的加载按钮（或按 Ctrl+R），选择歌曲文件。\n"
-             "支持 MP3、FLAC、WAV 等常见格式，也可以直接把文件拖到窗口底部。\n"
+             "在「歌单」页选择文件夹并扫描，右键某个文件夹或歌曲即可"
+             "「导入到播放列表」；也可以直接把文件拖到窗口底部。\n"
              "载入后主页会显示封面和滚动歌词轴，波形图会自动生成。"),
-            ("② 导入歌词",
+            ("② 播放列表与播放模式",
+             "底部左侧「播放列表」按钮打开播放队列，可搜索、移除（-）、"
+             "添加到下一首（+）、查看歌曲信息（…）。\n"
+             "底部「播放模式」按钮点击后弹出菜单，自由选择：单次播放、"
+             "顺序播放、循环播放、单曲循环、随机播放。\n"
+             "在「歌词制作」页编辑歌词时，播放模式会锁定为单次播放，"
+             "防止编辑到一半自动切歌。"),
+            ("③ 导入歌词",
              "点击「歌词制作」页面的「导入」按钮，选择歌词文件。\n"
              "如果歌曲旁边有同名 .lrc/.txt 文件，软件会自动加载。\n"
              "也可以直接在歌词输入框中粘贴歌词，按 Enter 提交。"),
-            ("③ 开始打轴",
+            ("④ 开始打轴",
              "这是最核心的步骤：\n"
              "• 播放音频，听到某句歌词开始时按 空格键 → 自动记录当前时间\n"
              "• 光标自动跳到下一行，继续听、继续按空格\n"
              "• 波形图可以帮你预判歌词出现的位置\n"
              "• 可以调慢播放速度（右下角滑块），慢速精准打轴"),
-            ("④ 精细编辑",
+            ("⑤ 精细编辑",
              "打轴完成后进入编辑阶段：\n"
              "• 点击时间戳按钮 → 跳转到该位置复听\n"
              "• Backspace → 删除当前行的时间戳（重新打）\n"
@@ -709,7 +785,7 @@ class MainWindow(QMainWindow):
              "• 双击歌词文字 → 内联编辑文本\n"
              "• 右键菜单 → 编辑 / 拆分 / 追加新行\n"
              "• Ctrl+H → 合并相邻选中行为一行"),
-            ("⑤ 保存导出",
+            ("⑥ 保存导出",
              "• Ctrl+S 保存 → 直接覆盖源歌词文件\n"
              "• Ctrl+Shift+S 导出 → 另存为新文件\n"
              "• 退出时可选自动覆写源文件（在设置中配置）"),

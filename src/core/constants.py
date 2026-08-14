@@ -74,12 +74,39 @@ class InputAction(StrEnum):
     SAVE = "save"
     EXPORT = "export"
     TRANSLATE = "translate"
-    LOAD_AUDIO = "loadAudio"
 
     # Global
     SHOW_HELP = "showHelp"
     UNDO = "undo"
     REDO = "redo"
+
+
+# ── Playback Mode ────────────────────────────────────────────
+
+class PlayMode(IntEnum):
+    """Playback modes for the play queue."""
+    SINGLE = 0        # 单次播放 — 播完当前一首即停
+    SEQUENTIAL = 1    # 顺序播放 — 从列表头到尾播完即停
+    LOOP = 2          # 循环播放 — 列表播完从头再来
+    SINGLE_LOOP = 3   # 单曲循环 — 单曲反复播放直到用户暂停
+    SHUFFLE = 4       # 随机播放 — 每首播完随机选下一首
+
+
+PLAY_MODE_LABELS = {
+    PlayMode.SINGLE: "单次播放",
+    PlayMode.SEQUENTIAL: "顺序播放",
+    PlayMode.LOOP: "循环播放",
+    PlayMode.SINGLE_LOOP: "单曲循环",
+    PlayMode.SHUFFLE: "随机播放",
+}
+
+PLAY_MODE_ORDER = [
+    PlayMode.SINGLE,
+    PlayMode.SEQUENTIAL,
+    PlayMode.LOOP,
+    PlayMode.SINGLE_LOOP,
+    PlayMode.SHUFFLE,
+]
 
 
 # ── Audio State ───────────────────────────────────────────────

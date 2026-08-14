@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -288,6 +289,7 @@ class _SongRow(QWidget):
 
     song_clicked = pyqtSignal(str)
     like_toggled = pyqtSignal(str, bool)
+    import_requested = pyqtSignal(str)
 
     def __init__(
         self,
@@ -302,6 +304,8 @@ class _SongRow(QWidget):
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(24 + indent * 20, 5, 16, 5)
@@ -345,6 +349,14 @@ class _SongRow(QWidget):
         self._liked = not self._liked
         self._refresh_like_btn()
         self.like_toggled.emit(self._song["path"], self._liked)
+
+    def _on_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        act = menu.addAction("导入到播放列表")
+        act.triggered.connect(
+            lambda: self.import_requested.emit(self._song["path"])
+        )
+        menu.exec(self.mapToGlobal(pos))
 
     def _refresh_like_btn(self) -> None:
         """Update like button appearance based on liked state."""
@@ -448,6 +460,8 @@ class _TreeBranch(QWidget):
     child _TreeBranch widgets and _SongRow widgets.
     """
 
+    import_requested = pyqtSignal(str)
+
     def __init__(
         self,
         node: _TreeNode,
@@ -477,6 +491,8 @@ class _TreeBranch(QWidget):
             f"#collapsibleHeader {{ padding-left: {12 + indent_px}px; text-align: left; }}"
         )
         self._header_btn.clicked.connect(self._toggle)
+        self._header_btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._header_btn.customContextMenuRequested.connect(self._on_context_menu)
         outer.addWidget(self._header_btn)
 
         # ── Content area ──
@@ -502,6 +518,14 @@ class _TreeBranch(QWidget):
 
     def _toggle(self) -> None:
         self._set_expanded(not self._expanded)
+
+    def _on_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        act = menu.addAction("导入到播放列表")
+        act.triggered.connect(
+            lambda: self.import_requested.emit(self._node.full_path)
+        )
+        menu.exec(self._header_btn.mapToGlobal(pos))
 
     def _set_expanded(self, expanded: bool) -> None:
         """Set expansion state programmatically (no toggle side-effects)."""
@@ -539,6 +563,13 @@ class _TreeBranch(QWidget):
         for b in self._branches:
             rows.extend(b.collect_rows())
         return rows
+
+    def collect_branches(self) -> list["_TreeBranch"]:
+        """Recursively collect this branch and all descendants."""
+        result = [self]
+        for b in self._branches:
+            result.extend(b.collect_branches())
+        return result
 
     def apply_filter(self, text: str, liked_only: bool = False,
                       expand_matches: bool = False) -> bool:
@@ -789,6 +820,9 @@ class PlaylistPage(QScrollArea):
         for row in root_branch.collect_rows():
             row.song_clicked.connect(self._on_song_clicked)
             row.like_toggled.connect(self._on_like_toggled)
+            row.import_requested.connect(self._on_import_requested)
+        for branch in root_branch.collect_branches():
+            branch.import_requested.connect(self._on_import_requested)
 
         if self._filter_text or self._show_liked_only:
             self._do_apply_filter()
@@ -839,6 +873,37 @@ class PlaylistPage(QScrollArea):
             pass
         if self._mw.audio_manager.paused:
             self._mw.audio_manager.toggle()
+
+    # ── Import into the play queue ─────────────────────────────
+
+    def get_all_songs(self) -> list[dict]:
+        """Return all scanned songs (shallow copy) in natural order."""
+        return [dict(s) for s in self._all_songs]
+
+    def _songs_under(self, folder_path: str) -> list[dict]:
+        """Return songs whose directory is *folder_path* or below it."""
+        folder = os.path.normcase(os.path.normpath(folder_path))
+        result = []
+        for s in self._all_songs:
+            d = os.path.normcase(os.path.normpath(os.path.dirname(s["path"])))
+            if d == folder or d.startswith(folder + os.sep):
+                result.append(dict(s))
+        return result
+
+    def _on_import_requested(self, path: str) -> None:
+        """Context menu: import a folder subtree or a single song."""
+        if os.path.isdir(path):
+            songs = self._songs_under(path)
+        else:
+            songs = [dict(s) for s in self._all_songs
+                     if os.path.normpath(s["path"]) == os.path.normpath(path)]
+        if not songs:
+            self._mw.toast_overlay.show_toast("warning", "该目录下没有歌曲")
+            return
+        self._mw.import_to_playlist(songs)
+        self._mw.toast_overlay.show_toast(
+            "success", f"已导入 {len(songs)} 首到播放列表"
+        )
 
     # ── Like toggle ───────────────────────────────────────────
 

@@ -80,7 +80,6 @@ ACTION_LABELS: Dict[InputAction, str] = {
     InputAction.SAVE: "保存",
     InputAction.EXPORT: "导出/另存",
     InputAction.TRANSLATE: "翻译模式",
-    InputAction.LOAD_AUDIO: "加载音频",
     # Global actions
     InputAction.SHOW_HELP: "显示帮助",
     InputAction.UNDO: "撤销",
@@ -104,7 +103,7 @@ ACTION_GROUPS: List[Tuple[str, List[InputAction]]] = [
     ]),
     ("工具栏", [
         InputAction.SAVE, InputAction.EXPORT,
-        InputAction.TRANSLATE, InputAction.LOAD_AUDIO,
+        InputAction.TRANSLATE,
     ]),
     ("音频控制", [
         InputAction.TOGGLE_PLAY, InputAction.SEEK_BACKWARD,
@@ -260,9 +259,6 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
     ],
     InputAction.TRANSLATE: [
         KeyBinding(code=Qt.Key.Key_T, ctrl_key=True),
-    ],
-    InputAction.LOAD_AUDIO: [
-        KeyBinding(code=Qt.Key.Key_R, ctrl_key=True),
     ],
 
     # Global actions

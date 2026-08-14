@@ -48,6 +48,7 @@ class AudioManager(QObject):
     error_occurred = pyqtSignal(str)
     duration_changed = pyqtSignal(float)
     meta_data_changed = pyqtSignal()
+    media_ended = pyqtSignal()
 
     _MS_TO_SEC = 0.001
     _TIMER_INTERVAL = 16  # ~60fps, matches requestAnimationFrame
@@ -70,6 +71,7 @@ class AudioManager(QObject):
         self._player.playbackStateChanged.connect(self._on_playback_state_changed)
         self._player.errorOccurred.connect(self._on_error)
         self._player.metaDataChanged.connect(self.meta_data_changed.emit)
+        self._player.mediaStatusChanged.connect(self._on_media_status_changed)
 
     # ── Property Accessors (match audioRef API) ────────────────
 
@@ -132,6 +134,17 @@ class AudioManager(QObject):
                 self._player.play()
             else:
                 self._player.pause()
+
+    def play(self) -> None:
+        """Start playback (no toggle — used for autoplay after loading)."""
+        if self._player.duration() > 0:
+            self._player.play()
+
+    def restart(self) -> None:
+        """Rewind to the start and play (used by single-loop / shuffle)."""
+        if self._player.duration() > 0:
+            self._player.setPosition(0)
+            self._player.play()
 
     def step(self, modifiers: Any, offset: float, target: Optional[float] = None) -> float:
         """Adjust playback position with modifier support.
@@ -214,6 +227,11 @@ class AudioManager(QObject):
             type=AudioState.DURATION_LOADED,
             payload=duration,
         ))
+
+    def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
+        """Emit ``media_ended`` when the current track finishes naturally."""
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.media_ended.emit()
 
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.PlaybackState.PlayingState:

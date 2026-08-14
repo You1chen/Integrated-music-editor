@@ -494,7 +494,7 @@ class MetaEditorPage(QScrollArea):
         # ── Prompt when no audio is loaded ──────────────────
         self._no_audio_label = QLabel(
             "请先载入音频文件\n\n"
-            "点击左下角加载按钮（或按 Ctrl+R）选择歌曲文件，\n"
+            "在「歌单」页点击歌曲，或把音频文件直接拖到窗口底部，\n"
             "即可在此编辑歌曲的元信息。"
         )
         self._no_audio_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
