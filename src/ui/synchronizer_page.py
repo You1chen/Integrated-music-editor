@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -1098,21 +1099,48 @@ class SynchronizerPage(QWidget):
             audio.current_time = time
 
     def _on_edit_timestamp(self, index: int) -> None:
-        """Open a dialog to manually edit a timestamp (Ctrl+click)."""
+        """Open a dialog to manually edit a timestamp (Ctrl+click / double-click).
+
+        The millisecond part is pre-selected (everything after the last '.',
+        excluding the closing ']'), so fine-tuning is type-and-enter without
+        touching the mouse.  After confirming, the audio seeks to the new
+        timestamp and auto-plays (see ``_parse_and_set_time``).
+        """
         line = self._mw.lrc_state.lyric[index]
         prefs = self._mw.config.get_preferences()
         current_tag = convert_time_to_tag(line.time, prefs.get("fixed", 3)) if line.time is not None else ""
-        new_tag, ok = QInputDialog.getText(
-            self,
-            "编辑时间戳",
-            f"输入时间戳 (mm:ss.xxx)：",
-            text=current_tag,
-        )
+
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("编辑时间戳")
+        dialog.setLabelText("输入时间戳 (mm:ss.xxx)：")
+        dialog.setTextValue(current_tag)
+
+        # QInputDialog selects everything on show — override it to select just
+        # the milliseconds, e.g. "[01:12.{523}]".  Runs after the dialog is
+        # shown (singleShot(0) fires on the first exec() event-loop pass).
+        line_edit = dialog.findChild(QLineEdit)
+        if line_edit and "." in current_tag:
+            dot = current_tag.rfind(".")
+            start = dot + 1
+            length = len(current_tag) - dot - 2  # exclude the trailing ']'
+            if length > 0:
+                QTimer.singleShot(
+                    0,
+                    lambda le=line_edit, s=start, l=length: le.setSelection(s, l),
+                )
+
+        ok = dialog.exec() == QDialog.DialogCode.Accepted
+        new_tag = dialog.textValue()
         if ok and new_tag.strip():
             self._parse_and_set_time(index, new_tag.strip())
 
     def _parse_and_set_time(self, index: int, tag: str) -> None:
-        """Parse a user-entered timestamp string and set it on the line."""
+        """Parse a user-entered timestamp string and set it on the line.
+
+        After the change the audio seeks to the new timestamp and starts
+        playing if it was paused — the fix is immediately audible, the same
+        "reach the timestamp and play" behaviour as stamping during sync.
+        """
         match = re.match(r"^\[?\s*(\d{1,3}):(\d{1,2}(?:[:.]\d{1,3})?)\s*]?$", tag)
         if not match:
             return
@@ -1123,6 +1151,13 @@ class SynchronizerPage(QWidget):
         # Select the line first, then set time
         self._mw.lrc_state.select(lambda _: index)
         self._mw.lrc_state.set_time(time_val)
+
+        # Seek to the new timestamp and auto-play, like stamping during sync.
+        audio = self._mw.audio_manager
+        if audio.duration > 0:
+            audio.current_time = time_val
+            if audio.paused:
+                audio.toggle()
 
     def _on_row_clicked(self, index: int) -> None:
         """User clicked the text area of a row → single-select, clear multi-select."""
