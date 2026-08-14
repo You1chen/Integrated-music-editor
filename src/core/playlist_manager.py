@@ -165,6 +165,20 @@ class PlaylistManager(QObject):
         self._connect_autoplay()
         self._emit_all()
 
+    def next(self) -> None:
+        """Play the next track in the queue (wraps around)."""
+        n = len(self._queue)
+        if n == 0 or self._current_index < 0:
+            return
+        self.play_index((self._current_index + 1) % n)
+
+    def prev(self) -> None:
+        """Play the previous track in the queue (wraps around)."""
+        n = len(self._queue)
+        if n == 0 or self._current_index < 0:
+            return
+        self.play_index((self._current_index - 1) % n)
+
     def _connect_autoplay(self) -> None:
         if self._autoplay_connected:
             return

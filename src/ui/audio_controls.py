@@ -68,12 +68,12 @@ class AudioControls(QWidget):
         self._mode_btn.clicked.connect(self._on_mode_clicked)
         layout.addWidget(self._mode_btn)
 
-        # ── Replay 5s ───────────────────────────────────
+        # ── Previous Song ───────────────────────────────
         self._replay_btn = QPushButton("⏮")
         self._replay_btn.setObjectName("audioButton")
-        self._replay_btn.setToolTip("后退 5 秒")
+        self._replay_btn.setToolTip("上一首")
         self._replay_btn.setFixedSize(36, 32)
-        self._replay_btn.clicked.connect(self._on_replay)
+        self._replay_btn.clicked.connect(self._on_prev)
         layout.addWidget(self._replay_btn)
 
         # ── Play/Pause ──────────────────────────────────
@@ -84,12 +84,12 @@ class AudioControls(QWidget):
         self._play_btn.clicked.connect(self._on_play_pause)
         layout.addWidget(self._play_btn)
 
-        # ── Forward 5s ──────────────────────────────────
+        # ── Next Song ───────────────────────────────────
         self._forward_btn = QPushButton("⏭")
         self._forward_btn.setObjectName("audioButton")
-        self._forward_btn.setToolTip("前进 5 秒")
+        self._forward_btn.setToolTip("下一首")
         self._forward_btn.setFixedSize(36, 32)
-        self._forward_btn.clicked.connect(self._on_forward)
+        self._forward_btn.clicked.connect(self._on_next)
         layout.addWidget(self._forward_btn)
 
         # ── Time Display ────────────────────────────────
@@ -250,11 +250,11 @@ class AudioControls(QWidget):
         """Disable mode switching while lyrics are being edited."""
         self._mode_btn.setEnabled(not locked)
 
-    def _on_replay(self) -> None:
-        self._mw.audio_manager.step({}, -5)
+    def _on_prev(self) -> None:
+        self._mw.playlist.prev()
 
-    def _on_forward(self) -> None:
-        self._mw.audio_manager.step({}, 5)
+    def _on_next(self) -> None:
+        self._mw.playlist.next()
 
     def _on_play_pause(self) -> None:
         self._mw.audio_manager.toggle()

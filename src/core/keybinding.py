@@ -70,6 +70,8 @@ ACTION_LABELS: Dict[InputAction, str] = {
     InputAction.INCREASE_RATE: "加速",
     InputAction.DECREASE_RATE: "减速",
     InputAction.TOGGLE_PLAY: "切换播放/暂停",
+    InputAction.PREV_SONG: "上一首",
+    InputAction.NEXT_SONG: "下一首",
     # Lyric editing actions
     InputAction.COPY_LINE: "复制歌词行",
     InputAction.SPLIT_LYRIC: "拆分歌词行",
@@ -106,7 +108,8 @@ ACTION_GROUPS: List[Tuple[str, List[InputAction]]] = [
         InputAction.TRANSLATE,
     ]),
     ("音频控制", [
-        InputAction.TOGGLE_PLAY, InputAction.SEEK_BACKWARD,
+        InputAction.TOGGLE_PLAY, InputAction.PREV_SONG,
+        InputAction.NEXT_SONG, InputAction.SEEK_BACKWARD,
         InputAction.SEEK_FORWARD, InputAction.RESET_RATE,
         InputAction.INCREASE_RATE, InputAction.DECREASE_RATE,
     ]),
@@ -208,15 +211,19 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
     ],
 
     # Audio control actions
+    InputAction.PREV_SONG: [
+        KeyBinding(code=Qt.Key.Key_H),
+    ],
+    InputAction.NEXT_SONG: [
+        KeyBinding(code=Qt.Key.Key_L),
+    ],
     InputAction.SEEK_BACKWARD: [
         KeyBinding(code=Qt.Key.Key_Left),
         KeyBinding(code=Qt.Key.Key_A),
-        KeyBinding(code=Qt.Key.Key_H),
     ],
     InputAction.SEEK_FORWARD: [
         KeyBinding(code=Qt.Key.Key_Right),
         KeyBinding(code=Qt.Key.Key_D),
-        KeyBinding(code=Qt.Key.Key_L),
     ],
     InputAction.RESET_RATE: [
         KeyBinding(code=Qt.Key.Key_R),

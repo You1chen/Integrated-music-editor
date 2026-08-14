@@ -10,7 +10,6 @@ from PyQt6.QtCore import (
     Qt,
     QThread,
     QTimer,
-    QUrl,
     pyqtSignal,
 )
 from PyQt6.QtWidgets import (
@@ -839,35 +838,34 @@ class PlaylistPage(QScrollArea):
             print(f"重新播放：{name}")
             return
 
-        # ── Different song → load and auto-play ──
-        url = QUrl.fromLocalFile(path).toString()
-        self._mw.audio_manager.set_source(url)
-        self._mw.config.remember_mp3_path(path)
-
-        # Auto-play once the audio is loaded
-        try:
-            self._mw.audio_manager.duration_changed.disconnect(
-                self._on_duration_loaded_for_autoplay
-            )
-        except TypeError:
-            pass
-        self._mw.audio_manager.duration_changed.connect(
-            self._on_duration_loaded_for_autoplay
+        # ── Different song → load through the play queue so the playback
+        #    mode (随机/循环/顺序…) and 上一首/下一首 apply to it. ──
+        pm = self._mw.playlist
+        norm = os.path.normpath
+        idx = next(
+            (i for i, e in enumerate(pm.queue)
+             if norm(e["path"]) == norm(path)),
+            None,
         )
+        if idx is None:
+            # Not queued yet — append so mode-based advancement has a list.
+            song = next(
+                (s for s in self._all_songs if norm(s.get("path", "")) == norm(path)),
+                None,
+            )
+            if song is None:
+                song = {
+                    "path": path,
+                    "title": os.path.splitext(os.path.basename(path))[0],
+                    "artist": "",
+                    "duration": 0,
+                }
+            pm.add_songs([song])
+            idx = len(pm.queue) - 1
+        pm.play_index(idx)
 
         name = os.path.basename(path)
         print(f"已加载：{name}")
-
-    def _on_duration_loaded_for_autoplay(self, duration: float) -> None:
-        """One-shot handler: auto-play after song is loaded."""
-        try:
-            self._mw.audio_manager.duration_changed.disconnect(
-                self._on_duration_loaded_for_autoplay
-            )
-        except TypeError:
-            pass
-        if self._mw.audio_manager.paused:
-            self._mw.audio_manager.toggle()
 
     # ── Import into the play queue ─────────────────────────────
 

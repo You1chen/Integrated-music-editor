@@ -62,6 +62,8 @@ class InputAction(StrEnum):
     INCREASE_RATE = "increaseRate"
     DECREASE_RATE = "decreaseRate"
     TOGGLE_PLAY = "togglePlay"
+    PREV_SONG = "prevSong"
+    NEXT_SONG = "nextSong"
 
     # Lyric editing actions
     COPY_LINE = "copyLine"

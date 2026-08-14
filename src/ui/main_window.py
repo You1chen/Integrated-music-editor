@@ -199,6 +199,16 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.Type.KeyPress:
             return super().eventFilter(obj, event)
 
+        # ── High priority: TOGGLE_PLAY (Ctrl+Enter) must work even while
+        #    editing lyrics in a text field (input box, inline edit, …).
+        if (
+            self.keybinding_manager.get_matched_action(event)
+            == InputAction.TOGGLE_PLAY
+        ):
+            if self.audio_manager.src:
+                self.audio_manager.toggle()
+                return True
+
         # ── Don't steal keys from text-input widgets ──
         focus_widget = QApplication.focusWidget()
         if focus_widget is not None and isinstance(
@@ -248,6 +258,8 @@ class MainWindow(QMainWindow):
                     InputAction.TOGGLE_PLAY,
                     InputAction.INCREASE_RATE,
                     InputAction.DECREASE_RATE,
+                    InputAction.PREV_SONG,
+                    InputAction.NEXT_SONG,
                 ):
                     return True
 
@@ -345,6 +357,12 @@ class MainWindow(QMainWindow):
             return True
         elif action == InputAction.TOGGLE_PLAY:
             self.audio_manager.toggle()
+            return True
+        elif action == InputAction.PREV_SONG:
+            self.playlist.prev()
+            return True
+        elif action == InputAction.NEXT_SONG:
+            self.playlist.next()
             return True
         elif action == InputAction.SYNC:
             # Space → play/pause globally (overridden by timestamp
