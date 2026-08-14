@@ -300,7 +300,6 @@ class _SongRow(QWidget):
         self._song = song
         self._liked = song.get("liked", False)
         self._hover = False
-        self._current = False
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -406,14 +405,7 @@ class _SongRow(QWidget):
         """Update all labels from the current song data."""
         s = self._song
         artist_str = f" — {s['artist']}" if s["artist"] else ""
-        prefix = "▶ " if self._current else ""
-        self._title_label.setText(f"{prefix}{s['title']}{artist_str}")
-        # Now-playing highlight: theme colour + bold
-        if self._current:
-            theme = _CURRENT_THEME_COLOR
-            self._title_label.setStyleSheet(f"color: {theme}; font-weight: bold;")
-        else:
-            self._title_label.setStyleSheet("")
+        self._title_label.setText(f"{s['title']}{artist_str}")
 
         self._lrc_label.setText("📝" if s.get("has_lrc") else "")
         self._lrc_label.setVisible(bool(s.get("has_lrc")))
@@ -425,13 +417,6 @@ class _SongRow(QWidget):
             self._dur_label.setText(f"{mins}:{secs:02d}")
         else:
             self._dur_label.setText("--:--")
-
-    def set_current(self, current: bool) -> None:
-        """Mark this row as the currently playing song (highlight)."""
-        if self._current == current:
-            return
-        self._current = current
-        self._refresh_labels()
 
     def update_song(self, song: dict) -> None:
         """Replace backing data and refresh display in-place."""
@@ -664,13 +649,6 @@ class PlaylistPage(QScrollArea):
         self._search_input.textChanged.connect(self._on_search_text_changed)
         toolbar.addWidget(self._search_input)
 
-        # ── Locate now-playing button ──
-        self._btn_locate = QPushButton("◎")
-        self._btn_locate.setToolTip("定位当前播放歌曲")
-        self._btn_locate.setFixedSize(30, 30)
-        self._btn_locate.clicked.connect(self._on_locate_current)
-        toolbar.addWidget(self._btn_locate)
-
         self._layout.addLayout(toolbar)
 
         # ── Content area (dynamic) ──
@@ -690,12 +668,6 @@ class PlaylistPage(QScrollArea):
 
         # ── Load cache on startup ──
         self._load_cache()
-
-        # Keep the "now playing" highlight in sync whenever a new audio
-        # source loads (auto-advance, playlist clicks, …).
-        self._mw.audio_manager.duration_changed.connect(
-            self._update_current_highlight
-        )
 
     # ── Cache ────────────────────────────────────────────────
 
@@ -848,72 +820,6 @@ class PlaylistPage(QScrollArea):
 
         if self._filter_text or self._show_liked_only:
             self._do_apply_filter()
-
-        self._update_current_highlight()
-
-    # ── Now-playing highlight / locate ────────────────────────
-
-    def _current_song_path(self) -> str:
-        """Path of the currently playing audio ('' when nothing loaded)."""
-        return self._mw.audio_manager.local_path
-
-    def _collect_all_rows(self) -> list:
-        rows: list = []
-        for b in self._branches:
-            rows.extend(b.collect_rows())
-        return rows
-
-    def _update_current_highlight(self, *_args) -> None:
-        """Mark the row matching the current audio as "now playing"."""
-        cur = self._current_song_path()
-        norm = os.path.normpath
-        for row in self._collect_all_rows():
-            row.set_current(bool(cur) and norm(row._song["path"]) == norm(cur))
-
-    def _expand_to_row(self, branch, cur: str):
-        """Depth-first search for *cur*; expand every ancestor branch on the
-        way back up so the found row is visible.  Returns the row or None."""
-        for child in branch._branches:
-            row = self._expand_to_row(child, cur)
-            if row is not None:
-                branch._set_expanded(True)
-                return row
-        for row in branch._song_rows:
-            if os.path.normpath(row._song["path"]) == os.path.normpath(cur):
-                return row
-        return None
-
-    def _locate_current(self, scroll: bool = True) -> bool:
-        """Expand the now-playing song's branch chain and scroll to it.
-
-        Returns True when the song is present in the library.
-        """
-        cur = self._current_song_path()
-        if not cur:
-            return False
-        for branch in self._branches:
-            row = self._expand_to_row(branch, cur)
-            if row is not None:
-                if scroll:
-                    self.ensureWidgetVisible(row, 0, 0)
-                return True
-        return False
-
-    def _on_locate_current(self) -> None:
-        """Locate button: scroll to the currently playing song."""
-        if not self._locate_current():
-            print("歌单中没有正在播放的歌曲")
-
-    def showEvent(self, event) -> None:
-        """Opening the page: highlight and jump to the now-playing song.
-
-        Deferred one event-loop turn so the freshly shown layout is ready.
-        After that the user is free to scroll anywhere; the locate button
-        brings them back.
-        """
-        super().showEvent(event)
-        self._update_current_highlight()
-        QTimer.singleShot(0, self._locate_current)
 
     # ── Song click → load audio + auto-play ──────────────────
 

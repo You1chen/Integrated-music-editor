@@ -13,8 +13,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -156,13 +157,19 @@ class PlaylistPanel(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # ── Toolbar: search + import ──
+        # ── Toolbar: import + locate + search ──
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
         self._import_btn = QPushButton("导入歌单")
         self._import_btn.setToolTip("导入整个歌单或某个文件夹")
         self._import_btn.clicked.connect(self._on_import_menu)
         toolbar.addWidget(self._import_btn)
+
+        self._locate_btn = QPushButton("◎ 定位")
+        self._locate_btn.setToolTip("定位当前播放歌曲")
+        self._locate_btn.setFixedHeight(28)
+        self._locate_btn.clicked.connect(self._on_locate)
+        toolbar.addWidget(self._locate_btn)
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("搜索...")
@@ -228,6 +235,45 @@ class PlaylistPanel(QDialog):
 
     def _on_search_changed(self, _text: str) -> None:
         self._rebuild()
+
+    # ── Locate now-playing entry ─────────────────────────────
+
+    def _locate_current(self, scroll: bool = True) -> bool:
+        """Scroll to the now-playing queue entry.  Returns True when found.
+
+        If the entry is hidden by the search box, the search is cleared
+        first so the song is reachable again.
+        """
+        current = self._mw.playlist.current_index
+        row = next((r for r in self._rows if r._index == current), None)
+        if row is None and self._search.text().strip():
+            # filtered out by search — clear it so the entry is reachable
+            self._search.clear()
+            QApplication.processEvents()  # let the rebuilt rows lay out
+            row = next((r for r in self._rows if r._index == current), None)
+        if row is not None and scroll:
+            # Force the container to its natural size: right after a rebuild
+            # the scroll area may still size it to the viewport, which would
+            # make row.y()/scrollbar range wrong.
+            self._rows_container.adjustSize()
+            sb = self._scroll.verticalScrollBar()
+            sb.setValue(max(0, min(row.y() - 16, sb.maximum())))
+        return row is not None
+
+    def _on_locate(self) -> None:
+        """Locate button: jump back to the now-playing entry."""
+        if not self._locate_current():
+            print("播放列表中没有正在播放的歌曲")
+
+    def showEvent(self, event) -> None:
+        """Opening the panel: jump to the now-playing entry by default.
+
+        Deferred one event-loop turn so the freshly shown layout is ready.
+        Afterwards the list scrolls freely; the locate button brings the
+        user back when they lose track of the current song.
+        """
+        super().showEvent(event)
+        QTimer.singleShot(0, self._locate_current)
 
     # ── Actions ──────────────────────────────────────────────
 
