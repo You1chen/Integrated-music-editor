@@ -647,7 +647,7 @@ class MetaEditorPage(QScrollArea):
         try:
             audio = mutagen.File(path)
         except Exception:
-            self._mw.toast_overlay.show_toast("warning", "无法读取音频文件元信息")
+            print("无法读取音频文件元信息")
             return
 
         if audio is None:
@@ -761,7 +761,7 @@ class MetaEditorPage(QScrollArea):
         try:
             audio = mutagen.File(path)
         except Exception:
-            self._mw.toast_overlay.show_toast("warning", "无法写入音频文件")
+            print("无法写入音频文件")
             return
 
         if audio is None:
@@ -819,9 +819,7 @@ class MetaEditorPage(QScrollArea):
                 )
 
             audio.save()
-            self._mw.toast_overlay.show_toast(
-                "success", "元信息已保存到音频文件"
-            )
+            print("元信息已保存到音频文件")
             return
 
         # ── VorbisComments (FLAC / Ogg) ────────────────────
@@ -849,9 +847,7 @@ class MetaEditorPage(QScrollArea):
                     audio.add_picture(pic)
 
             audio.save()
-            self._mw.toast_overlay.show_toast(
-                "success", "元信息已保存到音频文件"
-            )
+            print("元信息已保存到音频文件")
             return
 
         QMessageBox.warning(self, "错误", "不支持的音频格式，无法写入元信息")
@@ -958,15 +954,13 @@ class MetaEditorPage(QScrollArea):
         and rename the file if the filename was changed."""
         path = self._mw.audio_manager.local_path
         if not path:
-            self._mw.toast_overlay.show_toast("warning", "请先载入音频文件")
+            print("请先载入音频文件")
             return
 
         # ── Validate filename before saving ──
         new_stem = self._filename_input.text().strip()
         if not new_stem:
-            self._mw.toast_overlay.show_toast(
-                "warning", "文件名不能为空"
-            )
+            print("文件名不能为空")
             return
 
         # ── 1. Save metadata tags ──
@@ -985,10 +979,7 @@ class MetaEditorPage(QScrollArea):
             return  # same file (case-only change on Windows)
 
         if os.path.exists(new_path):
-            self._mw.toast_overlay.show_toast(
-                "warning",
-                f"目标文件已存在：{new_stem}{ext}",
-            )
+            print(f"目标文件已存在：{new_stem}{ext}")
             return
 
         # ── Release file lock before renaming ──
@@ -998,7 +989,7 @@ class MetaEditorPage(QScrollArea):
         try:
             os.rename(path, new_path)
         except OSError as e:
-            self._mw.toast_overlay.show_toast("warning", f"重命名失败：{e}")
+            print(f"重命名失败：{e}")
             # Re-load original file
             self._mw.audio_manager.set_source(
                 QUrl.fromLocalFile(path).toString()
@@ -1023,9 +1014,7 @@ class MetaEditorPage(QScrollArea):
         # ── 4. Refresh playlist entry ──
         self._notify_playlist(path, new_path)
 
-        self._mw.toast_overlay.show_toast(
-            "success", f"已重命名为：{new_stem}{ext}"
-        )
+        print(f"已重命名为：{new_stem}{ext}")
 
 
 # ── mutagen helper functions ─────────────────────────────────────

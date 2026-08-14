@@ -154,7 +154,7 @@ class PlaylistManager(QObject):
             return
         path = self._queue[index]["path"]
         if not os.path.isfile(path):
-            # Leave the current selection untouched — caller surfaces a toast.
+            # Leave the current selection untouched — caller prints a message.
             return
         self._current_index = index
         self._am.set_source(QUrl.fromLocalFile(path).toString())

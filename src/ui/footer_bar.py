@@ -110,6 +110,4 @@ class FooterBar(QWidget):
                 )
                 self._main_window.content_stack.set_page(PageRoute.EDITOR)
             except Exception as e:
-                self._main_window.toast_overlay.show_toast(
-                    "warning", f"加载文件失败：{e}"
-                )
+                print(f"加载文件失败：{e}")

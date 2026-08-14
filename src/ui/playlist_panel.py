@@ -272,9 +272,7 @@ class PlaylistPanel(QDialog):
             return
         songs = library.songs_under(node.full_path)
         self._mw.import_to_playlist(songs)
-        self._mw.toast_overlay.show_toast(
-            "success", f"已导入 {len(songs)} 首到播放列表"
-        )
+        print(f"已导入 {len(songs)} 首到播放列表")
 
     def play_index(self, index: int) -> None:
         self._mw.playlist.play_index(index)

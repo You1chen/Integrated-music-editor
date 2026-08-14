@@ -232,17 +232,17 @@ class HomePage(QWidget):
         """
         path = self._mw.audio_manager.local_path
         if not path or not os.path.isfile(path):
-            self._mw.toast_overlay.show_toast("warning", "无法保存封面：音频文件不存在")
+            print("无法保存封面：音频文件不存在")
             return
 
         try:
             audio = mutagen.File(path)
         except Exception:
-            self._mw.toast_overlay.show_toast("warning", "无法写入音频文件")
+            print("无法写入音频文件")
             return
 
         if audio is None:
-            self._mw.toast_overlay.show_toast("warning", "不支持的音频格式，无法写入封面")
+            print("不支持的音频格式，无法写入封面")
             return
 
         try:
@@ -253,7 +253,7 @@ class HomePage(QWidget):
                     audio.add_tags()
                     tags = audio.tags
                 except Exception:
-                    self._mw.toast_overlay.show_toast("warning", "无法为此文件创建标签")
+                    print("无法为此文件创建标签")
                     return
 
             # ── ID3 (MP3) ──────────────────────────────────────
@@ -286,13 +286,13 @@ class HomePage(QWidget):
                 self._after_cover_saved()
                 return
 
-            self._mw.toast_overlay.show_toast("warning", "该格式不支持写入封面")
+            print("该格式不支持写入封面")
         except Exception:
-            self._mw.toast_overlay.show_toast("warning", "保存封面失败")
+            print("保存封面失败")
 
     def _after_cover_saved(self) -> None:
-        """Toast success and force the meta editor to re-read the file."""
-        self._mw.toast_overlay.show_toast("success", "封面已保存到音频文件")
+        """Report success and force the meta editor to re-read the file."""
+        print("封面已保存到音频文件")
 
         # MetaEditorPage caches the audio path and skips re-reading on
         # showEvent when unchanged — invalidate the cache so the new

@@ -699,16 +699,14 @@ class PlaylistPage(QScrollArea):
             cache = self._mw.config.get_playlist_cache()
             self._root_dir = _migrate_root_dir(cache)
         if not self._root_dir:
-            self._mw.toast_overlay.show_toast(
-                "warning", "请先选择文件夹再进行扫描"
-            )
+            print("请先选择文件夹再进行扫描")
             return
         self._start_scan([self._root_dir], incremental=True)
 
     def _start_scan(
         self, root_dirs: list[str], incremental: bool = False
     ) -> None:
-        self._mw.toast_overlay.show_toast("info", "正在扫描音乐文件...")
+        print("正在扫描音乐文件...")
         self._btn_select.setEnabled(False)
         self._btn_rescan.setEnabled(False)
 
@@ -750,15 +748,12 @@ class PlaylistPage(QScrollArea):
         self._btn_select.setEnabled(True)
         self._btn_rescan.setEnabled(True)
         if self._scan_incremental:
-            self._mw.toast_overlay.show_toast(
-                "success",
+            print(
                 f"扫描完成，共 {len(songs)} 首"
-                f"（新增 {added}，更新 {updated}，删除 {removed}）",
+                f"（新增 {added}，更新 {updated}，删除 {removed}）"
             )
         else:
-            self._mw.toast_overlay.show_toast(
-                "success", f"扫描完成，共 {len(songs)} 首"
-            )
+            print(f"扫描完成，共 {len(songs)} 首")
 
     # ── Tree builder ──────────────────────────────────────────
 
@@ -831,7 +826,7 @@ class PlaylistPage(QScrollArea):
 
     def _on_song_clicked(self, path: str) -> None:
         if not os.path.isfile(path):
-            self._mw.toast_overlay.show_toast("warning", "文件不存在")
+            print("文件不存在")
             return
 
         # ── Same song → restart from beginning ──
@@ -841,7 +836,7 @@ class PlaylistPage(QScrollArea):
             if self._mw.audio_manager.paused:
                 self._mw.audio_manager.toggle()
             name = os.path.basename(path)
-            self._mw.toast_overlay.show_toast("success", f"重新播放：{name}")
+            print(f"重新播放：{name}")
             return
 
         # ── Different song → load and auto-play ──
@@ -861,7 +856,7 @@ class PlaylistPage(QScrollArea):
         )
 
         name = os.path.basename(path)
-        self._mw.toast_overlay.show_toast("success", f"已加载：{name}")
+        print(f"已加载：{name}")
 
     def _on_duration_loaded_for_autoplay(self, duration: float) -> None:
         """One-shot handler: auto-play after song is loaded."""
@@ -904,12 +899,10 @@ class PlaylistPage(QScrollArea):
             songs = [dict(s) for s in self._all_songs
                      if os.path.normpath(s["path"]) == os.path.normpath(path)]
         if not songs:
-            self._mw.toast_overlay.show_toast("warning", "该目录下没有歌曲")
+            print("该目录下没有歌曲")
             return
         self._mw.import_to_playlist(songs)
-        self._mw.toast_overlay.show_toast(
-            "success", f"已导入 {len(songs)} 首到播放列表"
-        )
+        print(f"已导入 {len(songs)} 首到播放列表")
 
     # ── Like toggle ───────────────────────────────────────────
 

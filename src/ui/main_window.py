@@ -27,7 +27,6 @@ from ..core.playlist_manager import PlaylistManager
 from .content_stack import ContentStack
 from .footer_bar import FooterBar
 from .header_bar import HeaderBar
-from .toast_overlay import ToastOverlay
 
 
 class MainWindow(QMainWindow):
@@ -115,9 +114,6 @@ class MainWindow(QMainWindow):
         # Footer (audio controls)
         self.footer_bar = FooterBar(self)
         layout.addWidget(self.footer_bar)
-
-        # Toast overlay (positioned absolutely at top-right)
-        self.toast_overlay = ToastOverlay(self)
 
         # ── Conect Signals ──────────────────────────────────
         self._connect_signals()
@@ -401,7 +397,7 @@ class MainWindow(QMainWindow):
         self.header_bar.page_requested.connect(self.content_stack.set_page)
         self.header_bar.help_requested.connect(self._show_help_dialog)
 
-        # Audio manager -> footer + lrc_state + toast
+        # Audio manager -> footer + lrc_state
         self.audio_manager.state_changed.connect(self._on_audio_state_changed)
         self.audio_manager.error_occurred.connect(self._on_audio_error)
         self.audio_manager.duration_changed.connect(self._on_duration_loaded)
@@ -419,7 +415,7 @@ class MainWindow(QMainWindow):
         self.footer_bar.update_audio_state(data)
 
     def _on_audio_error(self, message: str) -> None:
-        self.toast_overlay.show_toast("warning", message)
+        print(message)
 
     def _on_duration_loaded(self, duration: float) -> None:
         try:
@@ -428,7 +424,7 @@ class MainWindow(QMainWindow):
                 "length",
                 convert_time_to_tag(duration, self._format_options.fixed, False),
             )
-            self.toast_overlay.show_toast("success", "音频已载入")
+            print("音频已载入")
         except Exception:
             pass  # Prevent crash during audio metadata update
 
@@ -463,10 +459,7 @@ class MainWindow(QMainWindow):
                     select=0,
                 )
                 self.config.remember_lrc_path(lrc_path)
-                self.toast_overlay.show_toast(
-                    "success",
-                    f"已自动加载同名歌词：{os.path.basename(lrc_path)}",
-                )
+                print(f"已自动加载同名歌词：{os.path.basename(lrc_path)}")
             except Exception:
                 pass
             return  # Only load the first match (.lrc preferred over .txt)
@@ -550,16 +543,12 @@ class MainWindow(QMainWindow):
         """Import the whole media library in natural order (panel button)."""
         playlist_page = self.content_stack._pages.get(PageRoute.PLAYLIST)
         if playlist_page is None or not getattr(playlist_page, "_all_songs", []):
-            self.toast_overlay.show_toast(
-                "warning", "歌单为空，请先在「歌单」页扫描文件夹"
-            )
+            print("歌单为空，请先在「歌单」页扫描文件夹")
             return
         songs = playlist_page.get_all_songs()
         self.playlist.set_queue(songs)
         self.playlist.play_index(0)
-        self.toast_overlay.show_toast(
-            "success", f"已导入 {len(songs)} 首到播放列表"
-        )
+        print(f"已导入 {len(songs)} 首到播放列表")
 
     # ── Public Helpers ──────────────────────────────────────
 

@@ -312,7 +312,7 @@ class SynchronizerPage(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             input_text = text_edit.toPlainText().strip()
             if not input_text:
-                self._mw.toast_overlay.show_toast("warning", "未输入任何文本")
+                print("未输入任何文本")
                 return
             # Capture checkbox value now — after accept() the dialog
             # and its children are destroyed, so the lambda cannot
@@ -338,7 +338,7 @@ class SynchronizerPage(QWidget):
 
         self._mw.lrc_state.init_from_text("", self._mw.trim_options)
         self._mw.config.set_last_lrc_path(lrc_path)
-        self._mw.toast_overlay.show_toast("success", f"已创建新草稿：{os.path.basename(lrc_path)}")
+        print(f"已创建新草稿：{os.path.basename(lrc_path)}")
 
     # ── Import / Export ─────────────────────────────────────
 
@@ -403,7 +403,7 @@ class SynchronizerPage(QWidget):
                 with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
-                self._mw.toast_overlay.show_toast("success", "歌词已导入")
+                print("歌词已导入")
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"导入失败：{e}")
 
@@ -416,7 +416,7 @@ class SynchronizerPage(QWidget):
         """
         mp3_path = self._mw.config.get_last_mp3_path()
         if not mp3_path:
-            self._mw.toast_overlay.show_toast("warning", "未找到音频文件路径")
+            print("未找到音频文件路径")
             self._file_browser_import()
             return
 
@@ -428,14 +428,14 @@ class SynchronizerPage(QWidget):
                 with open(lrc_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
-                self._mw.toast_overlay.show_toast("info", "已是当前歌词文件")
+                print("已是当前歌词文件")
                 return
             try:
                 with open(lrc_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
                 self._mw.config.remember_lrc_path(lrc_path)
-                self._mw.toast_overlay.show_toast("success", "已加载同名歌词文件")
+                print("已加载同名歌词文件")
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"加载歌词文件失败：{e}")
         else:
@@ -449,7 +449,7 @@ class SynchronizerPage(QWidget):
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self._mw.lrc_state.init_from_text("", self._mw.trim_options)
-                self._mw.toast_overlay.show_toast("success", "已创建新草稿")
+                print("已创建新草稿")
             else:
                 self._file_browser_import()
 
@@ -493,7 +493,7 @@ class SynchronizerPage(QWidget):
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(text)
             self._mw.config.remember_lrc_path(file_path)
-            self._mw.toast_overlay.show_toast("success", "歌词已导出")
+            print("歌词已导出")
 
     def _on_edit_text(self) -> None:
         """Open a dialog to directly edit the LRC text."""
@@ -583,7 +583,7 @@ class SynchronizerPage(QWidget):
                 self._mw.config.set_last_lrc_path(lrc_path)
         ok, msg = self._mw.config.overwrite_lrc(text)
         if ok:
-            self._mw.toast_overlay.show_toast("success", msg)
+            print(msg)
             # Notify listeners (home page lyrics axis, etc.) to refresh
             # from the current in-memory state — no file re-read needed.
             self._mw.lrc_state.state_changed.emit()
@@ -805,9 +805,7 @@ class SynchronizerPage(QWidget):
                 self._append_target_index = state.select_index
                 target = state.select_index
                 QTimer.singleShot(0, lambda: self._scroll_to_row(target))
-                self._mw.toast_overlay.show_toast(
-                    "success", f"已复制第 {target} 行歌词"
-                )
+                print(f"已复制第 {target} 行歌词")
             return
 
         elif action == InputAction.SPLIT_LYRIC:
@@ -1176,17 +1174,15 @@ class SynchronizerPage(QWidget):
         self._multi_selected.clear()
         self._append_target_index = None
         if count == 1:
-            self._mw.toast_overlay.show_toast("success", "已删除 1 行")
+            print("已删除 1 行")
         else:
-            self._mw.toast_overlay.show_toast("success", f"已删除 {count} 行")
+            print(f"已删除 {count} 行")
 
     def _on_merge_selected(self) -> None:
         """Merge all selected lines (from context menu or Ctrl+H)."""
         selected = self._get_effective_selection()
         if len(selected) < 2:
-            self._mw.toast_overlay.show_toast(
-                "warning", "至少需要选中两行才能合并"
-            )
+            print("至少需要选中两行才能合并")
             return
         sorted_idx = sorted(selected)
         is_adjacent = all(
@@ -1194,17 +1190,13 @@ class SynchronizerPage(QWidget):
             for i in range(1, len(sorted_idx))
         )
         if not is_adjacent:
-            self._mw.toast_overlay.show_toast(
-                "warning", "选中的行不相邻，无法合并"
-            )
+            print("选中的行不相邻，无法合并")
             return
         count = len(selected)
         self._mw.lrc_state.merge_lines(selected)
         self._multi_selected.clear()
         self._append_target_index = None
-        self._mw.toast_overlay.show_toast(
-            "success", f"已将 {count} 行合并为 1 行"
-        )
+        print(f"已将 {count} 行合并为 1 行")
 
     def _on_edit_lyric(self, index: int) -> None:
         """Enter inline edit mode on the specified row."""
@@ -1222,7 +1214,7 @@ class SynchronizerPage(QWidget):
         if 0 <= index < len(state.lyric):
             if new_text != state.lyric[index].text:
                 state.set_text(index, new_text)
-                self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行歌词已更新")
+                print(f"第 {index + 1} 行歌词已更新")
 
     def _on_lyric_split_done(self, index: int, cleaned_text: str, positions: list) -> None:
         """Inline split confirmed — update state with split."""
@@ -1239,9 +1231,9 @@ class SynchronizerPage(QWidget):
 
         count = len(positions) + 1
         if count == 2:
-            self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行已一分为二")
+            print(f"第 {index + 1} 行已一分为二")
         else:
-            self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行已分裂为 {count} 行")
+            print(f"第 {index + 1} 行已分裂为 {count} 行")
 
     def _on_append_lyric(self, index: int) -> None:
         """Append a new empty line after the selected row, timestamped at the
@@ -1249,7 +1241,7 @@ class SynchronizerPage(QWidget):
         self._mw.lrc_state.append_line(index, time=self._get_sync_time())
         target = self._mw.lrc_state.select_index
         QTimer.singleShot(0, lambda: self._scroll_to_row(target))
-        self._mw.toast_overlay.show_toast("success", f"已在第 {index + 1} 行后追加新行")
+        print(f"已在第 {index + 1} 行后追加新行")
 
     # ── Lyric Input Box ────────────────────────────────────
 
@@ -1294,9 +1286,9 @@ class SynchronizerPage(QWidget):
 
         count = len(lines)
         if count == 1:
-            self._mw.toast_overlay.show_toast("success", "已添加歌词")
+            print("已添加歌词")
         else:
-            self._mw.toast_overlay.show_toast("success", f"已添加 {count} 行歌词")
+            print(f"已添加 {count} 行歌词")
 
     def _update_input_visibility(self) -> None:
         """Show or hide the lyric input box.
