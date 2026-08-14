@@ -235,7 +235,7 @@ def apply_theme(prefs: dict) -> None:
         border: 1px solid {border_strong};
         border-radius: {radius};
         padding: 6px 14px;
-        background-color: {surface};
+        background: transparent;
         color: {fg};
     }}
     QPushButton:hover {{

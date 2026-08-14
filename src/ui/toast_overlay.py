@@ -35,14 +35,11 @@ class ToastWidget(QFrame):
             "info": ("#f5c518", "#1a1d23"),
         }
         bg, fg = palettes.get(toast_type, palettes["info"])
-        # White needs a hairline border to stay visible over light content;
-        # red / yellow pop on their own in both themes.
-        border = "rgba(0, 0, 0, 0.15)" if toast_type == "success" else "none"
 
         self.setStyleSheet(
             f"QFrame {{"
             f"  background-color: {bg};"
-            f"  border: 1px solid {border};"
+            f"  border: none;"
             f"  border-radius: 8px;"
             f"}}"
         )

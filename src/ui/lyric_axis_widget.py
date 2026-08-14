@@ -90,6 +90,7 @@ class LyricItemWidget(QPushButton):
         self.setStyleSheet(f"""
             LyricItemWidget {{
                 border: 1px solid transparent;
+                background: transparent;
                 border-radius: 8px;
                 text-align: left;
             }}
