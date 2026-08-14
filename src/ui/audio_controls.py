@@ -10,7 +10,7 @@ import math
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QActionGroup
+from PyQt6.QtGui import QActionGroup, QFont
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -38,6 +38,20 @@ if TYPE_CHECKING:
 RATE_MIN = math.exp(-1.0)
 RATE_MAX = math.exp(1.0)
 
+# ── Playback-mode icons (text glyphs — same rendering family as ⏮/⏭/▶/☰) ──
+MODE_ICONS = {
+    PlayMode.SINGLE: "▶",       # 单次播放 — play once
+    PlayMode.SEQUENTIAL: "▶▶",  # 顺序播放 — play through in order
+    PlayMode.LOOP: "↻",         # 循环播放 — repeat all
+    PlayMode.SINGLE_LOOP: "↻¹", # 单曲循环 — repeat one
+    PlayMode.SHUFFLE: "⇄",      # 随机播放 — shuffle
+}
+
+
+def _mode_icon_text(mode: PlayMode) -> str:
+    """Return the icon glyph for a playback mode."""
+    return MODE_ICONS.get(mode, "▶")
+
 
 def rate_to_slider(rate: float) -> int:
     """Map a linear rate to the slider integer (ln(rate) × 100)."""
@@ -60,11 +74,14 @@ class AudioControls(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
 
-        # ── Playback Mode Button (replaces 加载音频) ────
-        self._mode_btn = QPushButton(PLAY_MODE_LABELS[PlayMode.SINGLE])
+        # ── Playback Mode Button (icon per mode; menu shows the labels) ──
+        self._mode_btn = QPushButton(_mode_icon_text(PlayMode.SINGLE))
         self._mode_btn.setObjectName("audioButton")
-        self._mode_btn.setToolTip("选择播放模式")
-        self._mode_btn.setFixedHeight(32)
+        self._mode_btn.setToolTip(
+            f"播放模式：{PLAY_MODE_LABELS[PlayMode.SINGLE]}"
+        )
+        self._mode_btn.setFixedSize(44, 32)
+        self._mode_btn.setFont(QFont("Segoe UI Symbol", 13))
         self._mode_btn.clicked.connect(self._on_mode_clicked)
         layout.addWidget(self._mode_btn)
 
@@ -243,8 +260,11 @@ class AudioControls(QWidget):
         self._mw.set_play_mode(mode)
 
     def update_mode_label(self, mode: PlayMode) -> None:
-        """Refresh the mode button text after the mode changes."""
-        self._mode_btn.setText(PLAY_MODE_LABELS.get(mode, PLAY_MODE_LABELS[PlayMode.SINGLE]))
+        """Refresh the mode button icon + tooltip after the mode changes."""
+        self._mode_btn.setText(_mode_icon_text(mode))
+        self._mode_btn.setToolTip(
+            f"播放模式：{PLAY_MODE_LABELS.get(mode, PLAY_MODE_LABELS[PlayMode.SINGLE])}"
+        )
 
     def set_mode_lock(self, locked: bool) -> None:
         """Disable mode switching while lyrics are being edited."""
