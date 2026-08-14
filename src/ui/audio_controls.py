@@ -60,14 +60,6 @@ class AudioControls(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
 
-        # ── Playlist Button (far left) ──────────────────
-        self._playlist_btn = QPushButton("播放列表")
-        self._playlist_btn.setObjectName("audioButton")
-        self._playlist_btn.setToolTip("打开播放列表")
-        self._playlist_btn.setFixedHeight(32)
-        self._playlist_btn.clicked.connect(self._on_open_playlist)
-        layout.addWidget(self._playlist_btn)
-
         # ── Playback Mode Button (replaces 加载音频) ────
         self._mode_btn = QPushButton(PLAY_MODE_LABELS[PlayMode.SINGLE])
         self._mode_btn.setObjectName("audioButton")
@@ -137,6 +129,14 @@ class AudioControls(QWidget):
         self._rate_slider.valueChanged.connect(self._on_rate_changed)
         self._rate_slider.double_clicked.connect(self._open_rate_dialog)
         layout.addWidget(self._rate_slider)
+
+        # ── Playlist Button (far right) ─────────────────
+        self._playlist_btn = QPushButton("☰")
+        self._playlist_btn.setObjectName("audioButton")
+        self._playlist_btn.setToolTip("播放列表")
+        self._playlist_btn.setFixedSize(36, 32)
+        self._playlist_btn.clicked.connect(self._on_open_playlist)
+        layout.addWidget(self._playlist_btn)
 
         # ── State ───────────────────────────────────────
         self._duration = 0.0

@@ -880,7 +880,13 @@ class PlaylistPage(QScrollArea):
         """Return all scanned songs (shallow copy) in natural order."""
         return [dict(s) for s in self._all_songs]
 
-    def _songs_under(self, folder_path: str) -> list[dict]:
+    def get_folder_tree(self):
+        """Return the directory tree root (``_TreeNode``) or None if empty."""
+        if not self._all_songs:
+            return None
+        return self._build_tree()
+
+    def songs_under(self, folder_path: str) -> list[dict]:
         """Return songs whose directory is *folder_path* or below it."""
         folder = os.path.normcase(os.path.normpath(folder_path))
         result = []
@@ -893,7 +899,7 @@ class PlaylistPage(QScrollArea):
     def _on_import_requested(self, path: str) -> None:
         """Context menu: import a folder subtree or a single song."""
         if os.path.isdir(path):
-            songs = self._songs_under(path)
+            songs = self.songs_under(path)
         else:
             songs = [dict(s) for s in self._all_songs
                      if os.path.normpath(s["path"]) == os.path.normpath(path)]

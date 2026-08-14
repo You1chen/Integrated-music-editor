@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -67,14 +68,19 @@ class _QueueRow(QWidget):
         layout.addWidget(self._dur_label)
 
         for text, tip, handler in (
-            ("−", "从播放列表移除", self._on_remove),
-            ("＋", "添加到下一首", self._on_insert_next),
+            ("-", "从播放列表移除", self._on_remove),
+            ("+", "添加到下一首", self._on_insert_next),
             ("…", "查看/编辑歌曲信息", self._on_info),
         ):
             btn = QPushButton(text)
             btn.setToolTip(tip)
             btn.setFixedSize(30, 28)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { border: none; padding: 0;"
+                " font-size: 16px; background: transparent; }"
+                "QPushButton:hover { font-size: 18px; }"
+            )
             btn.clicked.connect(handler)
             layout.addWidget(btn)
 
@@ -116,8 +122,8 @@ class PlaylistPanel(QDialog):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
         self._import_btn = QPushButton("导入歌单")
-        self._import_btn.setToolTip("把整个歌单按自然顺序导入播放列表")
-        self._import_btn.clicked.connect(self._on_import_all)
+        self._import_btn.setToolTip("导入整个歌单或某个文件夹")
+        self._import_btn.clicked.connect(self._on_import_menu)
         toolbar.addWidget(self._import_btn)
 
         self._search = QLineEdit()
@@ -187,8 +193,49 @@ class PlaylistPanel(QDialog):
 
     # ── Actions ──────────────────────────────────────────────
 
-    def _on_import_all(self) -> None:
-        self._mw.import_playlist_from_library()
+    def _on_import_menu(self) -> None:
+        """Open a menu: import the whole library or a specific folder."""
+        menu = QMenu(self)
+
+        act_all = menu.addAction("整个歌单")
+        act_all.triggered.connect(self._mw.import_playlist_from_library)
+
+        from ..core.constants import PageRoute
+        library = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
+        tree = library.get_folder_tree() if library is not None else None
+        if tree is not None and tree.children:
+            menu.addSeparator()
+            for child in tree.children:
+                self._add_folder_menu(menu, child)
+
+        menu.exec(self._import_btn.mapToGlobal(
+            self._import_btn.rect().bottomLeft()
+        ))
+
+    def _add_folder_menu(self, menu: QMenu, node) -> None:
+        """Recursively add folder nodes as submenus + an import action."""
+        count = node.total_song_count()
+        if node.children:
+            sub = menu.addMenu(f"📁 {node.name} ({count}首)")
+            import_all = sub.addAction(f"导入「{node.name}」全部 ({count}首)")
+            import_all.triggered.connect(lambda n=node: self._import_folder(n))
+            sub.addSeparator()
+            for child in node.children:
+                self._add_folder_menu(sub, child)
+        else:
+            act = menu.addAction(f"📁 {node.name} ({count}首)")
+            act.triggered.connect(lambda n=node: self._import_folder(n))
+
+    def _import_folder(self, node) -> None:
+        from ..core.constants import PageRoute
+        library = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
+        if library is None:
+            return
+        songs = library.songs_under(node.full_path)
+        self._mw.import_to_playlist(songs)
+        self._mw.toast_overlay.show_toast(
+            "success", f"已导入 {len(songs)} 首到播放列表"
+        )
 
     def play_index(self, index: int) -> None:
         self._mw.playlist.play_index(index)
