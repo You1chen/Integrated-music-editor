@@ -194,7 +194,7 @@ class PlaylistPanel(QDialog):
     # ── Actions ──────────────────────────────────────────────
 
     def _on_import_menu(self) -> None:
-        """Open a menu: import the whole library or a specific folder."""
+        """Open a menu: import the whole library or any folder (any depth)."""
         menu = QMenu(self)
 
         act_all = menu.addAction("整个歌单")
@@ -205,26 +205,27 @@ class PlaylistPanel(QDialog):
         tree = library.get_folder_tree() if library is not None else None
         if tree is not None and tree.children:
             menu.addSeparator()
-            for child in tree.children:
-                self._add_folder_menu(menu, child)
+            for child in sorted(tree.children, key=lambda n: n.name.lower()):
+                self._add_flat_folder(menu, child, 0)
 
         menu.exec(self._import_btn.mapToGlobal(
             self._import_btn.rect().bottomLeft()
         ))
 
-    def _add_folder_menu(self, menu: QMenu, node) -> None:
-        """Recursively add folder nodes as submenus + an import action."""
+    def _add_flat_folder(self, menu: QMenu, node, depth: int) -> None:
+        """Add every folder as a directly-clickable item (indented by depth).
+
+        Clicking a folder imports its whole subtree — no need to drill down
+        to leaf directories.
+        """
         count = node.total_song_count()
-        if node.children:
-            sub = menu.addMenu(f"📁 {node.name} ({count}首)")
-            import_all = sub.addAction(f"导入「{node.name}」全部 ({count}首)")
-            import_all.triggered.connect(lambda n=node: self._import_folder(n))
-            sub.addSeparator()
-            for child in node.children:
-                self._add_folder_menu(sub, child)
-        else:
-            act = menu.addAction(f"📁 {node.name} ({count}首)")
-            act.triggered.connect(lambda n=node: self._import_folder(n))
+        label = "    " * depth + f"📁 {node.name} ({count}首)"
+        act = menu.addAction(label)
+        act.triggered.connect(
+            lambda checked=False, n=node: self._import_folder(n)
+        )
+        for child in sorted(node.children, key=lambda n: n.name.lower()):
+            self._add_flat_folder(menu, child, depth + 1)
 
     def _import_folder(self, node) -> None:
         from ..core.constants import PageRoute
