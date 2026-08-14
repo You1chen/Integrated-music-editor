@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QTimer, Qt, QUrl
 from PyQt6.QtGui import (
     QColor,
     QMouseEvent,
@@ -50,7 +50,13 @@ class WaveformWidget(QWidget):
         self._mw.audio_manager.current_time_changed.connect(self._on_time_changed)
 
     def _on_audio_loaded(self, duration: float) -> None:
-        """Load and decode audio for waveform display."""
+        """React to a new audio source.
+
+        The heavy decode (reading the whole file for the waveform) is deferred
+        one event-loop turn so it never blocks or delays playback starting
+        when the song is switched — the audio begins immediately, and the
+        waveform fills in a moment later.
+        """
         src = self._mw.audio_manager.src
         if not src:
             return
@@ -62,9 +68,20 @@ class WaveformWidget(QWidget):
             self.update()
             return
 
+        self._duration = duration
+        QTimer.singleShot(0, lambda: self._decode(local_path, duration))
+
+    def _decode(self, local_path: str, duration: float) -> None:
+        """Decode the audio file into peak samples (may block briefly).
+
+        Skips when the user has already switched to another song — the queued
+        lambda is then stale and must not clobber the newer waveform.
+        """
+        if QUrl(self._mw.audio_manager.src).toLocalFile() != local_path:
+            return
         try:
             import soundfile as sf
-            data, samplerate = sf.read(local_path, always_2d=True)
+            data, samplerate = sf.read(local_path, always_2d=True, dtype="int16")
             # Convert to mono by averaging channels
             if data.ndim > 1 and data.shape[1] > 1:
                 mono = np.mean(data, axis=1)
