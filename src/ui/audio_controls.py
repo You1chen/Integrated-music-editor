@@ -216,6 +216,16 @@ class AudioControls(QWidget):
         self._fixed = fixed
         self._update_time_display()
 
+    def refresh_fixed(self) -> None:
+        """Re-read the timestamp precision from preferences.
+
+        Bound-method slot for ``lrc_state.state_changed``: using a bound
+        method (rather than a lambda) lets Qt auto-disconnect the signal
+        when this controls widget is destroyed — e.g. the second instance
+        inside the expanded lyric editor when its dialog closes.
+        """
+        self.set_fixed(self._mw.config.get_preferences().get("fixed", 3))
+
     def on_current_time_changed(self, time: float) -> None:
         """Handle current-time changes for seek-when-paused display updates.
 

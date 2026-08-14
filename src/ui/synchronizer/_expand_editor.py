@@ -288,9 +288,9 @@ class ExpandEditorDialog(QDialog):
         mw.audio_manager.state_changed.connect(ac.update_state)
         mw.audio_manager.current_time_changed.connect(ac.on_current_time_changed)
         mw.playlist.mode_changed.connect(ac.update_mode_label)
-        mw.lrc_state.state_changed.connect(
-            lambda: ac.set_fixed(mw.config.get_preferences().get("fixed", 3))
-        )
+        # Bound method (not a lambda) so the connection is auto-broken when
+        # the dialog — and this second AudioControls — is destroyed.
+        mw.lrc_state.state_changed.connect(ac.refresh_fixed)
 
         prefs = mw.config.get_preferences()
         ac.set_waveform_visible(prefs.get("showWaveform", True))
