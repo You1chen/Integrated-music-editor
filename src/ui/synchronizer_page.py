@@ -82,6 +82,8 @@ class SynchronizerPage(QWidget):
         self._lyric_input.submit_requested.connect(self._on_lyric_input_submit)
         self._lyric_input.hide()
         layout.addWidget(self._lyric_input)
+        # Typing new lyrics = an editing session: pause on focus, resume on submit.
+        self._lyric_input.installEventFilter(self)
 
         # ── Scroll area for lyric rows ────────────────
         self._scroll = QScrollArea()
@@ -114,6 +116,9 @@ class SynchronizerPage(QWidget):
         self._translation_mode = False
         self._append_target_index: int | None = None  # row index for append-after mode
         self._multi_selected: set[int] = set()  # transient multi-selection
+        # Was playback running before the current editing session paused it?
+        self._input_was_playing: bool | None = None   # lyric input box
+        self._trans_was_playing: bool | None = None   # translation row editing
 
         # Connect state changes
         self._mw.lrc_state.state_changed.connect(self._refresh_rows)
@@ -226,7 +231,8 @@ class SynchronizerPage(QWidget):
 
     def _on_translation_changed(self, index: int, text: str) -> None:
         """Live update translation text (no undo push — per-keystroke)."""
-        self._pause_for_edit()
+        if self._trans_was_playing is None:
+            self._trans_was_playing = self._pause_for_edit()
         state = self._mw.lrc_state
         if 0 <= index < len(state.lyric):
             state.lyric[index].translation = text
@@ -234,15 +240,21 @@ class SynchronizerPage(QWidget):
         state.state_changed.emit()
 
     def _on_translation_finished(self, index: int) -> None:
-        """User finished editing (Enter / focus loss) — push one undo snapshot."""
+        """User finished editing (Enter / focus loss) — push one undo snapshot
+        and resume playback if the translation session had paused it."""
         self._mw.lrc_state._push_undo()
+        self._resume_after_edit(bool(self._trans_was_playing))
+        self._trans_was_playing = None
 
     def _on_ai_assist(
         self, target_text_edit: QPlainTextEdit | None = None
     ) -> None:
         """Open the AI assist dialog — delegates to ``_ai_assist`` module."""
-        self._pause_for_edit()
-        show_ai_assist_dialog(self, target_text_edit)
+        was_playing = self._pause_for_edit()
+        try:
+            show_ai_assist_dialog(self, target_text_edit)
+        finally:
+            self._resume_after_edit(was_playing)
 
     def _build_prompt_text(self) -> tuple[str, int] | None:
         """Build the AI translation prompt — delegates to ``_ai_assist`` module."""
@@ -254,7 +266,7 @@ class SynchronizerPage(QWidget):
         When *initial_text* is provided, the text area is pre-filled with it
         (used by AI auto-translate to feed the API response into matching).
         """
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         dialog = QDialog(self)
         dialog.setWindowTitle("模式匹配 - 匹配翻译")
         dialog.resize(700, 500)
@@ -313,43 +325,49 @@ class SynchronizerPage(QWidget):
         btn_layout.addWidget(btn_match)
         dlg_layout.addLayout(btn_layout)
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            input_text = text_edit.toPlainText().strip()
-            if not input_text:
-                self._mw.toast_overlay.show_toast("warning", "未输入任何文本")
-                return
-            # Capture checkbox value now — after accept() the dialog
-            # and its children are destroyed, so the lambda cannot
-            # reference cb_overwrite directly.
-            overwrite = cb_overwrite.isChecked()
-            QTimer.singleShot(
-                0,
-                lambda: perform_pattern_matching(
-                    self, input_text, overwrite=overwrite
-                ),
-            )
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                input_text = text_edit.toPlainText().strip()
+                if not input_text:
+                    self._mw.toast_overlay.show_toast("warning", "未输入任何文本")
+                    return
+                # Capture checkbox value now — after accept() the dialog
+                # and its children are destroyed, so the lambda cannot
+                # reference cb_overwrite directly.
+                overwrite = cb_overwrite.isChecked()
+                QTimer.singleShot(
+                    0,
+                    lambda: perform_pattern_matching(
+                        self, input_text, overwrite=overwrite
+                    ),
+                )
+        finally:
+            self._resume_after_edit(was_playing)
 
     # ── New Draft ──────────────────────────────────────────
 
     def _on_new_draft(self) -> None:
         """Create a blank draft named after the currently loaded audio file."""
-        self._pause_for_edit()
-        mp3_path = self._mw.audio_manager.local_path
-        if not mp3_path:
-            QMessageBox.information(self, "提示", "请先加载音频文件")
-            return
+        was_playing = self._pause_for_edit()
+        try:
+            mp3_path = self._mw.audio_manager.local_path
+            if not mp3_path:
+                QMessageBox.information(self, "提示", "请先加载音频文件")
+                return
 
-        lrc_path = _mp3_to_lrc_path(mp3_path)
+            lrc_path = _mp3_to_lrc_path(mp3_path)
 
-        self._mw.lrc_state.init_from_text("", self._mw.trim_options)
-        self._mw.config.set_last_lrc_path(lrc_path)
-        self._mw.toast_overlay.show_toast("success", f"已创建新草稿：{os.path.basename(lrc_path)}")
+            self._mw.lrc_state.init_from_text("", self._mw.trim_options)
+            self._mw.config.set_last_lrc_path(lrc_path)
+            self._mw.toast_overlay.show_toast("success", f"已创建新草稿：{os.path.basename(lrc_path)}")
+        finally:
+            self._resume_after_edit(was_playing)
 
     # ── Import / Export ─────────────────────────────────────
 
     def _on_import(self) -> None:
         """Import LRC file: clear draft → smart import → file browser."""
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         state = self._mw.lrc_state
 
         # Stop audio timer during the entire import flow.  Otherwise
@@ -384,6 +402,7 @@ class SynchronizerPage(QWidget):
                 self._mw.audio_manager._timer.start(
                     self._mw.audio_manager._TIMER_INTERVAL
                 )
+            self._resume_after_edit(was_playing)
 
     def _file_browser_import(self) -> None:
         """Open a file dialog for the user to pick an LRC file manually."""
@@ -461,7 +480,7 @@ class SynchronizerPage(QWidget):
 
     def _on_export(self) -> None:
         """Export current LRC state to a file chosen by user."""
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         info = self._mw.lrc_state.info
         parts = []
         for key in ("ti", "ar"):
@@ -501,10 +520,11 @@ class SynchronizerPage(QWidget):
                 f.write(text)
             self._mw.config.remember_lrc_path(file_path)
             self._mw.toast_overlay.show_toast("success", "歌词已导出")
+        self._resume_after_edit(was_playing)
 
     def _on_edit_text(self) -> None:
         """Open a dialog to directly edit the LRC text."""
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         current_text = self._mw.lrc_state.stringify(self._mw.format_options)
 
         dialog = QDialog(self)
@@ -539,10 +559,11 @@ class SynchronizerPage(QWidget):
             self._mw.lrc_state.init_from_text(new_text, self._mw.trim_options)
             # Persist to disk via the same path as the toolbar save
             self._do_save()
+        self._resume_after_edit(was_playing)
 
     def _on_preview(self) -> None:
         """Show a read-only preview of the LRC output."""
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         text = self._mw.lrc_state.stringify(self._mw.format_options)
 
         dialog = QDialog(self)
@@ -568,7 +589,10 @@ class SynchronizerPage(QWidget):
         btn_layout.addWidget(btn_close)
         dlg_layout.addLayout(btn_layout)
 
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            self._resume_after_edit(was_playing)
 
     # ── Save ─────────────────────────────────────────────────
 
@@ -618,7 +642,7 @@ class SynchronizerPage(QWidget):
 
     def _show_save_warning_dialog(self) -> None:
         """Show the overwrite warning dialog with preview/cancel options."""
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         dialog = QDialog(self)
         dialog.setWindowTitle("保存确认")
         dialog.setMinimumWidth(420)
@@ -654,20 +678,23 @@ class SynchronizerPage(QWidget):
         btn_layout.addWidget(btn_cancel)
         dlg_layout.addLayout(btn_layout)
 
-        result = dialog.exec()
+        try:
+            result = dialog.exec()
 
-        # Persist "never show" preference
-        if self._save_warning_cb.isChecked():
-            prefs = self._mw.config.get_preferences()
-            prefs["showSaveWarning"] = False
-            self._mw.update_preferences(prefs)
+            # Persist "never show" preference
+            if self._save_warning_cb.isChecked():
+                prefs = self._mw.config.get_preferences()
+                prefs["showSaveWarning"] = False
+                self._mw.update_preferences(prefs)
 
-        # If user closed via X or cancel, do nothing
-        if result != QDialog.DialogCode.Accepted:
-            return
+            # If user closed via X or cancel, do nothing
+            if result != QDialog.DialogCode.Accepted:
+                return
 
-        # User confirmed save (after preview)
-        self._do_save()
+            # User confirmed save (after preview)
+            self._do_save()
+        finally:
+            self._resume_after_edit(was_playing)
 
     def _on_save_preview(self, warning_dialog: QDialog) -> None:
         """Preview then confirm save flow from the warning dialog."""
@@ -811,7 +838,7 @@ class SynchronizerPage(QWidget):
         elif action == InputAction.COPY_LINE:
             if 0 <= state.select_index < len(state.lyric):
                 event.accept()
-                self._pause_for_edit()
+                was_playing = self._pause_for_edit()
                 state.copy_line(state.select_index)
                 self._append_target_index = state.select_index
                 target = state.select_index
@@ -819,6 +846,7 @@ class SynchronizerPage(QWidget):
                 self._mw.toast_overlay.show_toast(
                     "success", f"已复制第 {target} 行歌词"
                 )
+                self._resume_after_edit(was_playing)
             return
 
         elif action == InputAction.SPLIT_LYRIC:
@@ -879,7 +907,14 @@ class SynchronizerPage(QWidget):
     # ── Event Filter (viewport background clicks) ────────────
 
     def eventFilter(self, obj, event):
-        """Detect clicks on empty space of the scroll area → deselect row."""
+        """Detect clicks on empty space of the scroll area → deselect row.
+
+        Also watches the lyric input box: gaining focus starts an editing
+        session (pause playback once), submitting resumes it."""
+        if obj == self._lyric_input and event.type() == QEvent.Type.FocusIn:
+            if self._input_was_playing is None:
+                self._input_was_playing = self._pause_for_edit()
+            return super().eventFilter(obj, event)
         if obj == self._scroll.viewport() and event.type() == QEvent.Type.MouseButtonPress:
             pos = event.position().toPoint()
             child = self._scroll.viewport().childAt(pos)
@@ -1052,12 +1087,22 @@ class SynchronizerPage(QWidget):
         reaction_ms = self._mw.config.get_reaction_time_ms()
         return max(0.0, self._mw.audio_manager.current_time - reaction_ms / 1000.0)
 
-    def _pause_for_edit(self) -> None:
-        """Pause playback while the user edits lyrics or a modal dialog is
-        open, so the music doesn't distract from the editing work."""
+    def _pause_for_edit(self) -> bool:
+        """Pause playback at the start of an editing session (a dialog is
+        open, or the user is typing/editing lyrics).  Returns True when
+        playback was running, so the caller can resume afterwards."""
         audio = self._mw.audio_manager
-        if not audio.paused:
+        was_playing = not audio.paused
+        if was_playing:
             audio.toggle()
+        return was_playing
+
+    def _resume_after_edit(self, was_playing: bool) -> None:
+        """Resume playback after an editing session, but only if it was
+        playing before the session paused it — never auto-start a player
+        that was already paused."""
+        if was_playing and self._mw.audio_manager.paused:
+            self._mw.audio_manager.toggle()
 
     def _on_sync(self) -> None:
         """Called by on-screen space button."""
@@ -1123,7 +1168,7 @@ class SynchronizerPage(QWidget):
         touching the mouse.  After confirming, the audio seeks to the new
         timestamp and auto-plays (see ``_parse_and_set_time``).
         """
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         line = self._mw.lrc_state.lyric[index]
         prefs = self._mw.config.get_preferences()
         current_tag = convert_time_to_tag(line.time, prefs.get("fixed", 3)) if line.time is not None else ""
@@ -1151,6 +1196,7 @@ class SynchronizerPage(QWidget):
         new_tag = dialog.textValue()
         if ok and new_tag.strip():
             self._parse_and_set_time(index, new_tag.strip())
+        self._resume_after_edit(was_playing)
 
     def _parse_and_set_time(self, index: int, tag: str) -> None:
         """Parse a user-entered timestamp string and set it on the line.
@@ -1224,7 +1270,7 @@ class SynchronizerPage(QWidget):
         selected = self._get_effective_selection()
         if not selected:
             return
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         count = len(selected)
         self._mw.lrc_state.delete_lines(selected)
         self._multi_selected.clear()
@@ -1233,6 +1279,7 @@ class SynchronizerPage(QWidget):
             self._mw.toast_overlay.show_toast("success", "已删除 1 行")
         else:
             self._mw.toast_overlay.show_toast("success", f"已删除 {count} 行")
+        self._resume_after_edit(was_playing)
 
     def _on_merge_selected(self) -> None:
         """Merge all selected lines (from context menu or Ctrl+H)."""
@@ -1253,13 +1300,14 @@ class SynchronizerPage(QWidget):
             )
             return
         count = len(selected)
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         self._mw.lrc_state.merge_lines(selected)
         self._multi_selected.clear()
         self._append_target_index = None
         self._mw.toast_overlay.show_toast(
             "success", f"已将 {count} 行合并为 1 行"
         )
+        self._resume_after_edit(was_playing)
 
     def _on_edit_lyric(self, index: int) -> None:
         """Enter inline edit mode on the specified row."""
@@ -1276,9 +1324,10 @@ class SynchronizerPage(QWidget):
         state = self._mw.lrc_state
         if 0 <= index < len(state.lyric):
             if new_text != state.lyric[index].text:
-                self._pause_for_edit()
+                was_playing = self._pause_for_edit()
                 state.set_text(index, new_text)
                 self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行歌词已更新")
+                self._resume_after_edit(was_playing)
 
     def _on_lyric_split_done(self, index: int, cleaned_text: str, positions: list) -> None:
         """Inline split confirmed — update state with split."""
@@ -1286,7 +1335,7 @@ class SynchronizerPage(QWidget):
         if not (0 <= index < len(state.lyric)):
             return
 
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         state.set_text(index, cleaned_text)
         state.split_line(index, positions)
 
@@ -1299,15 +1348,17 @@ class SynchronizerPage(QWidget):
             self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行已一分为二")
         else:
             self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行已分裂为 {count} 行")
+        self._resume_after_edit(was_playing)
 
     def _on_append_lyric(self, index: int) -> None:
         """Append a new empty line after the selected row, timestamped at the
         current audio position minus the reaction time offset."""
-        self._pause_for_edit()
+        was_playing = self._pause_for_edit()
         self._mw.lrc_state.append_line(index, time=self._get_sync_time())
         target = self._mw.lrc_state.select_index
         QTimer.singleShot(0, lambda: self._scroll_to_row(target))
         self._mw.toast_overlay.show_toast("success", f"已在第 {index + 1} 行后追加新行")
+        self._resume_after_edit(was_playing)
 
     # ── Lyric Input Box ────────────────────────────────────
 
@@ -1326,7 +1377,6 @@ class SynchronizerPage(QWidget):
         if not lines:
             return
 
-        self._pause_for_edit()
         state = self._mw.lrc_state
 
         # Determine insert position and timestamp
@@ -1356,6 +1406,10 @@ class SynchronizerPage(QWidget):
             self._mw.toast_overlay.show_toast("success", "已添加歌词")
         else:
             self._mw.toast_overlay.show_toast("success", f"已添加 {count} 行歌词")
+
+        # Typing session (paused on input-box focus) is over — resume playback.
+        self._resume_after_edit(bool(self._input_was_playing))
+        self._input_was_playing = None
 
     def _update_input_visibility(self) -> None:
         """Show or hide the lyric input box.
