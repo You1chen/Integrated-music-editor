@@ -45,6 +45,7 @@ from .synchronizer._ai_assist import (
     perform_pattern_matching,
     show_ai_assist_dialog,
 )
+from .synchronizer._expand_editor import ExpandEditorDialog
 from .synchronizer._helpers import _contrast_for_theme, _rgba
 from .synchronizer._lyric_input import _LyricInput
 from .synchronizer._lyric_row import _LyricRow
@@ -80,10 +81,20 @@ class SynchronizerPage(QWidget):
         # ── Lyric input box (top of lyrics list) ──────
         self._lyric_input = _LyricInput(self)
         self._lyric_input.submit_requested.connect(self._on_lyric_input_submit)
-        self._lyric_input.hide()
-        layout.addWidget(self._lyric_input)
-        # Typing new lyrics = an editing session: pause on focus, resume on submit.
-        self._lyric_input.installEventFilter(self)
+
+        self._btn_expand = QPushButton("展开")
+        self._btn_expand.setToolTip("展开为大幅歌词编辑窗口")
+        self._btn_expand.setFixedWidth(64)
+        self._btn_expand.clicked.connect(self._on_expand_input)
+
+        self._input_container = QWidget()
+        input_layout = QHBoxLayout(self._input_container)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(4)
+        input_layout.addWidget(self._lyric_input, stretch=1)
+        input_layout.addWidget(self._btn_expand)
+        self._input_container.hide()
+        layout.addWidget(self._input_container)
 
         # ── Scroll area for lyric rows ────────────────
         self._scroll = QScrollArea()
@@ -103,6 +114,9 @@ class SynchronizerPage(QWidget):
 
         # ── Detect background clicks for deselection ──
         self._scroll.viewport().installEventFilter(self)
+
+        # Typing new lyrics = an editing session: pause on focus, resume on submit.
+        self._lyric_input.installEventFilter(self)
 
         # ── Space Button (optional, absolute-positioned) ─
         self._space_btn: QPushButton | None = None
@@ -910,10 +924,17 @@ class SynchronizerPage(QWidget):
         """Detect clicks on empty space of the scroll area → deselect row.
 
         Also watches the lyric input box: gaining focus starts an editing
-        session (pause playback once), submitting resumes it."""
-        if obj == self._lyric_input and event.type() == QEvent.Type.FocusIn:
-            if self._input_was_playing is None:
-                self._input_was_playing = self._pause_for_edit()
+        session (pause playback once), submitting resumes it.
+
+        Note: the input box is reparented into ``_input_container`` during
+        construction, which fires events *before* ``_scroll`` exists — so all
+        input-box events are consumed by the first branch and never fall
+        through to the scroll-area check.
+        """
+        if obj == self._lyric_input:
+            if event.type() == QEvent.Type.FocusIn:
+                if self._input_was_playing is None:
+                    self._input_was_playing = self._pause_for_edit()
             return super().eventFilter(obj, event)
         if obj == self._scroll.viewport() and event.type() == QEvent.Type.MouseButtonPress:
             pos = event.position().toPoint()
@@ -1363,19 +1384,27 @@ class SynchronizerPage(QWidget):
     # ── Lyric Input Box ────────────────────────────────────
 
     def _on_lyric_input_submit(self) -> None:
-        """Handle Enter in the lyric input box.
+        """Handle Enter in the lyric input box."""
+        self._insert_lyric_lines(self._lyric_input.toPlainText())
+        self._lyric_input.clear()
+        # Typing session (paused on input-box focus) is over — resume playback.
+        self._resume_after_edit(bool(self._input_was_playing))
+        self._input_was_playing = None
+
+    def _insert_lyric_lines(self, raw: str) -> int:
+        """Insert lyric text into the state, one line per lyric.
 
         Splits input by newlines, filters empty lines, then either:
         - Inserts at top (timestamp 0.0) when no row has been clicked
         - Appends after the clicked row (same timestamp)
+
+        Returns the number of lines inserted (0 when there was nothing).
         """
-        raw = self._lyric_input.toPlainText()
-        # Split by newlines, strip each line, filter empty
         lines = [ln.strip() for ln in raw.split("\n")]
         lines = [ln for ln in lines if ln]
 
         if not lines:
-            return
+            return 0
 
         state = self._mw.lrc_state
 
@@ -1390,9 +1419,6 @@ class SynchronizerPage(QWidget):
             ref_time = 0.0
 
         state.insert_lines(after_index, lines, ref_time)
-
-        # Clear input and reset append target
-        self._lyric_input.clear()
         self._append_target_index = None
 
         # Defer scroll so the layout processes the new rows first —
@@ -1406,10 +1432,22 @@ class SynchronizerPage(QWidget):
             self._mw.toast_overlay.show_toast("success", "已添加歌词")
         else:
             self._mw.toast_overlay.show_toast("success", f"已添加 {count} 行歌词")
+        return count
 
-        # Typing session (paused on input-box focus) is over — resume playback.
-        self._resume_after_edit(bool(self._input_was_playing))
-        self._input_was_playing = None
+    def _on_expand_input(self) -> None:
+        """Open the large lyric-entry window (expanded input box)."""
+        dialog = ExpandEditorDialog(
+            self._mw,
+            initial_text=self._lyric_input.toPlainText(),
+            parent=self,
+        )
+        dialog.lyrics_submitted.connect(self._on_expand_submit)
+        dialog.exec()
+
+    def _on_expand_submit(self, text: str) -> None:
+        """Commit text from the expanded editor as lyric lines."""
+        if self._insert_lyric_lines(text) > 0:
+            self._lyric_input.clear()
 
     def _update_input_visibility(self) -> None:
         """Show or hide the lyric input box.
@@ -1418,7 +1456,7 @@ class SynchronizerPage(QWidget):
         mode is active.  Even an empty draft needs an input so the user
         can start typing lyrics.
         """
-        self._lyric_input.setVisible(not self._translation_mode)
+        self._input_container.setVisible(not self._translation_mode)
 
     def _restyle_input(self) -> None:
         """Apply theme styling to the lyric input box."""
