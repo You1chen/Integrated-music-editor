@@ -125,6 +125,26 @@ class AudioManager(QObject):
         if self._player.duration() > 0:
             self._player.setPosition(int(time * 1000))
 
+    @property
+    def volume(self) -> float:
+        """Get output volume in [0, 1]."""
+        return self._output.volume()
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        """Set output volume in [0, 1]."""
+        self._output.setVolume(guard(value, 0.0, 1.0))
+
+    @property
+    def muted(self) -> bool:
+        """Whether the output is muted."""
+        return self._output.isMuted()
+
+    @muted.setter
+    def muted(self, value: bool) -> None:
+        """Mute / unmute the output."""
+        self._output.setMuted(bool(value))
+
     # ── Playback Control ───────────────────────────────────────
 
     def toggle(self) -> None:

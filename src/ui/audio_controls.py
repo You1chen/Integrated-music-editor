@@ -1,16 +1,23 @@
-"""Audio controls — custom player bar (replaces audio.tsx).
+"""Audio controls — custom player bar (three-zone layout).
 
-Play/pause, ±5s skip, timeline slider, rate slider (log scale),
-time display, and waveform.
+Left   — cover placeholder + song info (title/subtitle) + like/comment/more.
+Middle — transport row (shuffle · prev · big circular play · next · volume)
+         + progress row (current time · timeline/waveform · rate chip · total).
+Right  — playback-mode text button · lyrics-display toggle · playlist icon.
+
+The same widget is used in the main footer and inside the expanded lyric
+editor; shared audio/playlist state is wired internally so both instances
+behave identically.
 """
 
 from __future__ import annotations
 
 import math
+import os
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QActionGroup, QFont
+from PyQt6.QtGui import QActionGroup, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -38,20 +45,6 @@ if TYPE_CHECKING:
 RATE_MIN = math.exp(-1.0)
 RATE_MAX = math.exp(1.0)
 
-# ── Playback-mode icons (text glyphs — same rendering family as ⏮/⏭/▶/☰) ──
-MODE_ICONS = {
-    PlayMode.SINGLE: "▶",       # 单次播放 — play once
-    PlayMode.SEQUENTIAL: "▶▶",  # 顺序播放 — play through in order
-    PlayMode.LOOP: "↻",         # 循环播放 — repeat all
-    PlayMode.SINGLE_LOOP: "↻¹", # 单曲循环 — repeat one
-    PlayMode.SHUFFLE: "⇄",      # 随机播放 — shuffle
-}
-
-
-def _mode_icon_text(mode: PlayMode) -> str:
-    """Return the icon glyph for a playback mode."""
-    return MODE_ICONS.get(mode, "▶")
-
 
 def rate_to_slider(rate: float) -> int:
     """Map a linear rate to the slider integer (ln(rate) × 100)."""
@@ -71,91 +64,14 @@ class AudioControls(QWidget):
         self._mw = main_window
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(10)
 
-        # ── Playback Mode Button (icon per mode; menu shows the labels) ──
-        self._mode_btn = QPushButton(_mode_icon_text(PlayMode.SINGLE))
-        self._mode_btn.setObjectName("audioButton")
-        self._mode_btn.setToolTip(
-            f"播放模式：{PLAY_MODE_LABELS[PlayMode.SINGLE]}"
-        )
-        self._mode_btn.setFixedSize(44, 32)
-        self._mode_btn.setFont(QFont("Segoe UI Symbol", 13))
-        self._mode_btn.clicked.connect(self._on_mode_clicked)
-        layout.addWidget(self._mode_btn)
+        self._build_left(layout)
+        self._build_middle(layout)
+        self._build_right(layout)
 
-        # ── Previous Song ───────────────────────────────
-        self._replay_btn = QPushButton("⏮")
-        self._replay_btn.setObjectName("audioButton")
-        self._replay_btn.setToolTip("上一首")
-        self._replay_btn.setFixedSize(36, 32)
-        self._replay_btn.clicked.connect(self._on_prev)
-        layout.addWidget(self._replay_btn)
-
-        # ── Play/Pause ──────────────────────────────────
-        self._play_btn = QPushButton("▶")
-        self._play_btn.setObjectName("audioButton")
-        self._play_btn.setToolTip("播放")
-        self._play_btn.setFixedSize(36, 32)
-        self._play_btn.clicked.connect(self._on_play_pause)
-        layout.addWidget(self._play_btn)
-
-        # ── Next Song ───────────────────────────────────
-        self._forward_btn = QPushButton("⏭")
-        self._forward_btn.setObjectName("audioButton")
-        self._forward_btn.setToolTip("下一首")
-        self._forward_btn.setFixedSize(36, 32)
-        self._forward_btn.clicked.connect(self._on_next)
-        layout.addWidget(self._forward_btn)
-
-        # ── Time Display ────────────────────────────────
-        self._time_label = QLabel("00:00.000 / 00:00.000")
-        self._time_label.setStyleSheet("font-family: monospace; font-size: 13px; padding: 0 6px;")
-        layout.addWidget(self._time_label)
-
-        # ── Timeline Slider ─────────────────────────────
-        self._timeline = QSlider(Qt.Orientation.Horizontal)
-        self._timeline.setRange(0, 0)
-        self._timeline.setSingleStep(1000)  # ms
-        self._timeline.sliderPressed.connect(self._on_slider_pressed)
-        self._timeline.sliderReleased.connect(self._on_slider_released)
-        self._timeline.sliderMoved.connect(self._on_slider_moved)
-        layout.addWidget(self._timeline, stretch=2)
-
-        # ── Waveform (hidden by default) ────────────────
-        from .waveform_widget import WaveformWidget
-        self._waveform = WaveformWidget(main_window)
-        self._waveform.hide()
-        layout.addWidget(self._waveform, stretch=3)
-
-        # ── Rate Display ────────────────────────────────
-        self._rate_btn = _RateButton("×1.00")
-        self._rate_btn.setObjectName("audioButton")
-        self._rate_btn.setToolTip("单击重置为 1.00 · 双击输入/调整播放速度")
-        self._rate_btn.setFixedWidth(60)
-        self._rate_btn.clicked.connect(self._on_rate_clicked)
-        self._rate_btn.double_clicked.connect(self._open_rate_dialog)
-        layout.addWidget(self._rate_btn)
-
-        # ── Rate Slider (log scale) ─────────────────────
-        self._rate_slider = _RateSlider(Qt.Orientation.Horizontal)
-        self._rate_slider.setRange(-100, 100)  # maps to ln(rate), -1 to 1
-        self._rate_slider.setValue(0)
-        self._rate_slider.setFixedWidth(100)
-        self._rate_slider.valueChanged.connect(self._on_rate_changed)
-        self._rate_slider.double_clicked.connect(self._open_rate_dialog)
-        layout.addWidget(self._rate_slider)
-
-        # ── Playlist Button (far right) ─────────────────
-        self._playlist_btn = QPushButton("☰")
-        self._playlist_btn.setObjectName("audioButton")
-        self._playlist_btn.setToolTip("播放列表")
-        self._playlist_btn.setFixedSize(36, 32)
-        self._playlist_btn.clicked.connect(self._on_open_playlist)
-        layout.addWidget(self._playlist_btn)
-
-        # ── State ───────────────────────────────────────
+        # ── State ───────────────────────────────────────────
         self._duration = 0.0
         self._current_time = 0.0
         self._seeking = False
@@ -163,6 +79,7 @@ class AudioControls(QWidget):
         self._fixed: Fixed = 3
         self._paused = True
         self._waveform_visible = False
+        self._prev_mode: PlayMode = PlayMode.SEQUENTIAL
 
         # Timer for periodic UI refresh during playback
         self._ui_timer = QTimer(self)
@@ -174,6 +91,216 @@ class AudioControls(QWidget):
         self._rate_reset_timer = QTimer(self)
         self._rate_reset_timer.setSingleShot(True)
         self._rate_reset_timer.timeout.connect(self._on_rate_reset)
+
+        # ── Internal wiring (receiver = self, auto-disconnects on destroy) ──
+        # New audio loaded / metadata refreshed → cover + info + like state.
+        self._mw.audio_manager.meta_data_changed.connect(self._refresh_cover)
+        self._mw.audio_manager.duration_changed.connect(self._on_audio_reloaded)
+        # Queue moves to another song (prev/next/click) → refresh text + like.
+        self._mw.playlist.current_changed.connect(self._refresh_song_info)
+        self._mw.playlist.current_changed.connect(self._refresh_like_state)
+        self._mw.playlist.queue_changed.connect(self._refresh_like_state)
+        # Like toggled in any instance (footer / expanded editor) → re-read.
+        self._mw.liked_changed.connect(self._on_liked_changed)
+
+        # ── Initial reflect (audio may already be loaded) ───
+        self._duration = self._mw.audio_manager.duration
+        self._rate = self._mw.audio_manager.playback_rate
+        self._rate_btn.setText(f"×{self._rate:.2f}")
+        self._update_time_display()
+        self._refresh_cover()
+        self._refresh_song_info()
+        self._refresh_like_state()
+        self._refresh_volume_icon()
+        self._sync_lyric_toggle(self._mw.lyric_axis_visible())
+
+    # ── Layout construction ─────────────────────────────────
+
+    def _build_left(self, layout: QHBoxLayout) -> None:
+        """Left zone: cover + (title / subtitle / status icons)."""
+        left = QHBoxLayout()
+        left.setSpacing(8)
+        left.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # Cover placeholder — a square frame; the embedded cover fills it
+        # when available (image content is best-effort).
+        self._cover = QLabel()
+        self._cover.setObjectName("footerCover")
+        self._cover.setFixedSize(52, 52)
+        self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        left.addWidget(self._cover)
+
+        # Text column: two lines + a row of status icons below, vertically
+        # centred so extra footer height is absorbed symmetrically.
+        text_col = QVBoxLayout()
+        text_col.setSpacing(1)
+        text_col.addStretch(1)
+
+        self._title_label = QLabel("未加载音频")
+        self._title_label.setObjectName("songTitle")
+        self._title_label.setFixedWidth(160)
+        text_col.addWidget(self._title_label)
+
+        self._subtitle_label = QLabel("")
+        self._subtitle_label.setObjectName("songSubtitle")
+        self._subtitle_label.setFixedWidth(160)
+        text_col.addWidget(self._subtitle_label)
+
+        icons = QHBoxLayout()
+        icons.setSpacing(4)
+        self._like_btn = QPushButton("♡")
+        self._like_btn.setObjectName("statusBtn")
+        self._like_btn.setCheckable(True)
+        self._like_btn.setToolTip("喜欢")
+        self._like_btn.setFixedSize(28, 24)
+        self._like_btn.clicked.connect(self._on_like_clicked)
+        icons.addWidget(self._like_btn)
+
+        self._comment_label = QLabel("💬 0")
+        self._comment_label.setObjectName("statusBtn")
+        self._comment_label.setToolTip("评论（互动量，当前无数据源）")
+        self._comment_label.setFixedWidth(52)
+        icons.addWidget(self._comment_label)
+
+        self._more_btn = QPushButton("⋯")
+        self._more_btn.setObjectName("statusBtn")
+        self._more_btn.setToolTip("更多操作")
+        self._more_btn.setFixedSize(28, 24)
+        self._more_btn.clicked.connect(self._on_more_clicked)
+        icons.addWidget(self._more_btn)
+        icons.addStretch()
+        text_col.addLayout(icons)
+        text_col.addStretch(1)
+
+        left.addLayout(text_col)
+        layout.addLayout(left)
+
+    def _build_middle(self, layout: QHBoxLayout) -> None:
+        """Middle zone: transport row (top) + progress row (bottom)."""
+        middle = QVBoxLayout()
+        middle.setSpacing(3)
+        middle.addStretch(1)
+
+        # ── Top: five transport icons, equally spaced ──
+        top = QHBoxLayout()
+        top.setSpacing(14)
+        top.addStretch()
+
+        self._shuffle_btn = QPushButton("⇄")
+        self._shuffle_btn.setObjectName("audioButton")
+        self._shuffle_btn.setCheckable(True)
+        self._shuffle_btn.setToolTip("随机播放")
+        self._shuffle_btn.setFixedSize(34, 34)
+        self._shuffle_btn.clicked.connect(self._on_shuffle_clicked)
+        top.addWidget(self._shuffle_btn)
+
+        self._replay_btn = QPushButton("⏮")
+        self._replay_btn.setObjectName("audioButton")
+        self._replay_btn.setToolTip("上一首")
+        self._replay_btn.setFixedSize(34, 34)
+        self._replay_btn.clicked.connect(self._on_prev)
+        top.addWidget(self._replay_btn)
+
+        # The big circular play key — visual anchor of the bar.
+        self._play_btn = QPushButton("▶")
+        self._play_btn.setObjectName("bigPlayBtn")
+        self._play_btn.setToolTip("播放")
+        self._play_btn.setFixedSize(46, 46)
+        self._play_btn.clicked.connect(self._on_play_pause)
+        top.addWidget(self._play_btn)
+
+        self._forward_btn = QPushButton("⏭")
+        self._forward_btn.setObjectName("audioButton")
+        self._forward_btn.setToolTip("下一首")
+        self._forward_btn.setFixedSize(34, 34)
+        self._forward_btn.clicked.connect(self._on_next)
+        top.addWidget(self._forward_btn)
+
+        self._volume_btn = QPushButton("🔊")
+        self._volume_btn.setObjectName("audioButton")
+        self._volume_btn.setToolTip("音量")
+        self._volume_btn.setFixedSize(34, 34)
+        self._volume_btn.clicked.connect(self._on_volume_clicked)
+        top.addWidget(self._volume_btn)
+
+        top.addStretch()
+        middle.addLayout(top)
+
+        # ── Bottom: current time · timeline/waveform · rate · total ──
+        bottom = QHBoxLayout()
+        bottom.setSpacing(8)
+
+        self._time_label = QLabel("00:00.000")
+        self._time_label.setStyleSheet(
+            "font-family: monospace; font-size: 12px; padding: 0 2px;"
+        )
+        bottom.addWidget(self._time_label)
+
+        self._timeline = QSlider(Qt.Orientation.Horizontal)
+        self._timeline.setRange(0, 0)
+        self._timeline.setSingleStep(1000)  # ms
+        self._timeline.sliderPressed.connect(self._on_slider_pressed)
+        self._timeline.sliderReleased.connect(self._on_slider_released)
+        self._timeline.sliderMoved.connect(self._on_slider_moved)
+        bottom.addWidget(self._timeline, stretch=1)
+
+        from .waveform_widget import WaveformWidget
+        self._waveform = WaveformWidget(self._mw)
+        self._waveform.hide()
+        bottom.addWidget(self._waveform, stretch=1)
+
+        self._rate_btn = _RateButton("×1.00")
+        self._rate_btn.setObjectName("audioButton")
+        self._rate_btn.setToolTip("单击重置为 1.00 · 双击输入/调整播放速度")
+        self._rate_btn.setFixedWidth(52)
+        self._rate_btn.clicked.connect(self._on_rate_clicked)
+        self._rate_btn.double_clicked.connect(self._open_rate_dialog)
+        bottom.addWidget(self._rate_btn)
+
+        self._duration_label = QLabel("00:00.000")
+        self._duration_label.setStyleSheet(
+            "font-family: monospace; font-size: 12px; padding: 0 2px;"
+        )
+        bottom.addWidget(self._duration_label)
+
+        middle.addLayout(bottom)
+        middle.addStretch(1)
+        layout.addLayout(middle, stretch=1)
+
+    def _build_right(self, layout: QHBoxLayout) -> None:
+        """Right zone: mode/quality · lyrics toggle · playlist."""
+        right = QHBoxLayout()
+        right.setSpacing(8)
+        right.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # ── Playback-mode text button (menu lists all modes) ──
+        self._mode_btn = QPushButton(PLAY_MODE_LABELS[PlayMode.SINGLE])
+        self._mode_btn.setObjectName("qualityBtn")
+        self._mode_btn.setToolTip(
+            f"播放模式：{PLAY_MODE_LABELS[PlayMode.SINGLE]}"
+        )
+        self._mode_btn.setFixedHeight(30)
+        self._mode_btn.clicked.connect(self._on_mode_clicked)
+        right.addWidget(self._mode_btn)
+
+        # ── Lyrics-display toggle (bound to the home lyric axis) ──
+        self._lyric_btn = QPushButton()
+        self._lyric_btn.setObjectName("lyricToggleBtn")
+        self._lyric_btn.setCheckable(True)
+        self._lyric_btn.setToolTip("显示/隐藏歌词轴")
+        self._lyric_btn.setFixedHeight(30)
+        self._lyric_btn.clicked.connect(self._on_lyric_toggle_clicked)
+        right.addWidget(self._lyric_btn)
+
+        # ── Playlist / queue ─────────────────────────────────
+        self._playlist_btn = QPushButton("☰")
+        self._playlist_btn.setObjectName("audioButton")
+        self._playlist_btn.setToolTip("播放列表")
+        self._playlist_btn.setFixedSize(34, 30)
+        self._playlist_btn.clicked.connect(self._on_open_playlist)
+        right.addWidget(self._playlist_btn)
+
+        layout.addLayout(right)
 
     # ── Public API ──────────────────────────────────────────
 
@@ -199,12 +326,6 @@ class AudioControls(QWidget):
         elif data.type == AudioState.RATE_CHANGED:
             self._rate = data.payload
             self._rate_btn.setText(f"×{self._rate:.2f}")
-            # Update slider without triggering signal
-            log_rate = math.log(self._rate)
-            slider_val = int(log_rate * 100)
-            self._rate_slider.blockSignals(True)
-            self._rate_slider.setValue(max(-100, min(100, slider_val)))
-            self._rate_slider.blockSignals(False)
 
     def set_waveform_visible(self, visible: bool) -> None:
         """Show/hide waveform widget."""
@@ -241,7 +362,171 @@ class AudioControls(QWidget):
         self._timeline.setValue(int(time * 1000))
         self._timeline.blockSignals(False)
 
-    # ── Internal Handlers ───────────────────────────────────
+    def update_mode_label(self, mode: PlayMode) -> None:
+        """Refresh the mode text button + shuffle highlight."""
+        label = PLAY_MODE_LABELS.get(mode, PLAY_MODE_LABELS[PlayMode.SINGLE])
+        self._mode_btn.setText(label)
+        self._mode_btn.setToolTip(f"播放模式：{label}")
+        self._shuffle_btn.setChecked(mode == PlayMode.SHUFFLE)
+
+    def set_mode_lock(self, locked: bool) -> None:
+        """Disable mode switching while lyrics are being edited."""
+        self._mode_btn.setEnabled(not locked)
+        self._shuffle_btn.setEnabled(not locked)
+
+    def set_rate(self, rate: float) -> None:
+        """Apply a playback rate and persist it if the config asks to."""
+        self._mw.audio_manager.playback_rate = rate
+        if self._mw.config.get_remember_playback_rate():
+            self._mw.config.set_last_playback_rate(rate)
+
+    # ── Left-zone handlers ──────────────────────────────────
+
+    def _on_like_clicked(self) -> None:
+        path = self._mw.audio_manager.local_path
+        if not path:
+            self._refresh_like_state()
+            return
+        cache = self._mw.config.get_playlist_cache()
+        in_cache = any(
+            s.get("path") == path for s in cache.get("songs", [])
+        )
+        if not in_cache:
+            self._refresh_like_state()  # revert the visual toggle
+            self._mw.toast_overlay.show_toast(
+                "info", "仅在歌单中的歌曲可收藏"
+            )
+            return
+        liked = self._mw.config.toggle_playlist_like(path)
+        self._mw.liked_changed.emit(path, liked)
+        self._refresh_like_state()
+
+    def _on_liked_changed(self, path: str, _liked: bool) -> None:
+        """Another instance toggled a like — re-read if it was this song."""
+        if path == self._mw.audio_manager.local_path:
+            self._refresh_like_state()
+
+    def _on_more_clicked(self) -> None:
+        from .song_info_dialog import SongInfoDialog
+        song = self._mw.playlist.current_song
+        path = self._mw.audio_manager.local_path
+        if song is None and path:
+            song = {
+                "path": path,
+                "title": os.path.splitext(os.path.basename(path))[0],
+                "artist": "",
+                "duration": self._duration,
+            }
+        if song and song.get("path"):
+            SongInfoDialog(self._mw, song, self).exec()
+
+    def _refresh_song_info(self, *_args) -> None:
+        """Fill title/subtitle from the queue entry or the audio file."""
+        song = self._mw.playlist.current_song
+        path = self._mw.audio_manager.local_path
+        if song:
+            title = song.get("title") or os.path.splitext(
+                os.path.basename(song["path"])
+            )[0]
+            subtitle = song.get("artist", "") or ""
+        elif path:
+            title = os.path.splitext(os.path.basename(path))[0]
+            subtitle = ""
+        else:
+            title = "未加载音频"
+            subtitle = ""
+        self._set_elided(self._title_label, title)
+        self._set_elided(self._subtitle_label, subtitle)
+        self._more_btn.setEnabled(bool(path))
+
+    def _refresh_like_state(self, *_args) -> None:
+        """Sync the like button with the playlist-cache liked flag."""
+        path = self._mw.audio_manager.local_path
+        self._like_btn.setEnabled(bool(path))
+        liked = False
+        if path:
+            cache = self._mw.config.get_playlist_cache()
+            for s in cache.get("songs", []):
+                if s.get("path") == path:
+                    liked = bool(s.get("liked", False))
+                    break
+        self._like_btn.setChecked(liked)
+        self._like_btn.setText("❤" if liked else "♡")
+
+    def _refresh_cover(self, *_args) -> None:
+        """Fill the cover frame with the embedded cover (or leave it empty)."""
+        pixmap = self._mw.audio_manager.cover_image
+        if pixmap is not None:
+            scaled = pixmap.scaled(
+                52, 52,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._cover.setPixmap(scaled)
+        else:
+            self._cover.setPixmap(QPixmap())
+
+    def _on_audio_reloaded(self, _duration: float) -> None:
+        """A new audio file was loaded — refresh everything audio-derived."""
+        self._refresh_cover()
+        self._refresh_song_info()
+        self._refresh_like_state()
+        self._refresh_volume_icon()
+
+    # ── Middle-zone handlers ────────────────────────────────
+
+    def _on_shuffle_clicked(self) -> None:
+        mode = self._mw.playlist.mode
+        if mode == PlayMode.SHUFFLE:
+            prev = (
+                self._prev_mode
+                if self._prev_mode != PlayMode.SHUFFLE
+                else PlayMode.SEQUENTIAL
+            )
+            self._mw.set_play_mode(prev)
+        else:
+            self._prev_mode = mode
+            self._mw.set_play_mode(PlayMode.SHUFFLE)
+
+    def _on_prev(self) -> None:
+        self._mw.playlist.prev()
+
+    def _on_next(self) -> None:
+        self._mw.playlist.next()
+
+    def _on_play_pause(self) -> None:
+        self._mw.audio_manager.toggle()
+
+    def _on_volume_clicked(self) -> None:
+        popup = getattr(self, "_volume_popup", None)
+        if popup is None:
+            popup = _VolumePopup(self)
+            self._volume_popup = popup
+        if popup.isVisible():
+            popup.close()
+        else:
+            popup._refresh_from_audio()
+            popup._position_near(self._volume_btn)
+            popup.show()
+
+    def _refresh_volume_icon(self) -> None:
+        muted = (
+            self._mw.audio_manager.muted
+            or self._mw.audio_manager.volume <= 0.001
+        )
+        self._volume_btn.setText("🔇" if muted else "🔊")
+
+    # ── Right-zone handlers ─────────────────────────────────
+
+    def _on_lyric_toggle_clicked(self) -> None:
+        self._sync_lyric_toggle(self._mw.toggle_lyric_axis())
+
+    def _sync_lyric_toggle(self, visible: bool) -> None:
+        """Force the button's checked state to match the real axis state."""
+        self._lyric_btn.blockSignals(True)
+        self._lyric_btn.setChecked(visible)
+        self._lyric_btn.blockSignals(False)
+        self._lyric_btn.setText("歌词 开" if visible else "歌词 关")
 
     def _on_open_playlist(self) -> None:
         self._mw.open_playlist_panel()
@@ -269,50 +554,25 @@ class AudioControls(QWidget):
     def _on_mode_selected(self, mode: PlayMode) -> None:
         self._mw.set_play_mode(mode)
 
-    def update_mode_label(self, mode: PlayMode) -> None:
-        """Refresh the mode button icon + tooltip after the mode changes."""
-        self._mode_btn.setText(_mode_icon_text(mode))
-        self._mode_btn.setToolTip(
-            f"播放模式：{PLAY_MODE_LABELS.get(mode, PLAY_MODE_LABELS[PlayMode.SINGLE])}"
-        )
-
-    def set_mode_lock(self, locked: bool) -> None:
-        """Disable mode switching while lyrics are being edited."""
-        self._mode_btn.setEnabled(not locked)
-
-    def _on_prev(self) -> None:
-        self._mw.playlist.prev()
-
-    def _on_next(self) -> None:
-        self._mw.playlist.next()
-
-    def _on_play_pause(self) -> None:
-        self._mw.audio_manager.toggle()
-
-    def set_rate(self, rate: float) -> None:
-        """Apply a playback rate and persist it if the config asks to."""
-        self._mw.audio_manager.playback_rate = rate
-        if self._mw.config.get_remember_playback_rate():
-            self._mw.config.set_last_playback_rate(rate)
+    # ── Rate ────────────────────────────────────────────────
 
     def _open_rate_dialog(self) -> None:
-        """Open the rate-adjust dialog (double-click on display/slider)."""
+        """Open the rate-adjust dialog (double-click on the chip)."""
         self._rate_reset_timer.stop()  # a double-click shouldn't also reset
         dialog = _RateAdjustDialog(self)
         dialog.exec()
 
     def _on_rate_clicked(self) -> None:
-        """Single click on the display → reset, deferred to disambiguate
+        """Single click on the chip → reset, deferred to disambiguate
         from a double-click."""
         from PyQt6.QtWidgets import QApplication
         self._rate_reset_timer.start(QApplication.doubleClickInterval())
 
     def _on_rate_reset(self) -> None:
-        """Reset playback rate to 1.0 (single-click on the display)."""
+        """Reset playback rate to 1.0 (single-click on the chip)."""
         self.set_rate(1.0)
 
-    def _on_rate_changed(self, value: int) -> None:
-        self.set_rate(slider_to_rate(value))
+    # ── Timeline ────────────────────────────────────────────
 
     def _on_slider_pressed(self) -> None:
         self._seeking = True
@@ -341,14 +601,15 @@ class AudioControls(QWidget):
             self._timeline.blockSignals(False)
 
     def _update_time_display(self) -> None:
-        """Update the time label."""
+        """Update the current + total time labels."""
         cur = convert_time_to_tag(self._current_time, self._fixed, False)
         dur = (
             convert_time_to_tag(self._duration, self._fixed, False)
             if self._duration > 0
             else "00:00.000"
         )
-        self._time_label.setText(f"{cur} / {dur}")
+        self._time_label.setText(cur)
+        self._duration_label.setText(dur)
 
     def _show_waveform(self, visible: bool) -> None:
         """Toggle timeline vs waveform display."""
@@ -359,18 +620,107 @@ class AudioControls(QWidget):
             self._waveform.hide()
             self._timeline.show()
 
+    # ── Helpers ─────────────────────────────────────────────
+
+    def _set_elided(self, label: QLabel, text: str) -> None:
+        """Set a label's text, elided to its fixed width."""
+        fm = label.fontMetrics()
+        elided = fm.elidedText(
+            text or "", Qt.TextElideMode.ElideRight, label.width() - 2
+        )
+        label.setText(elided)
+
+
+# ── Volume popup ──────────────────────────────────────────
+
+
+class _VolumePopup(QDialog):
+    """Frameless popup for live volume control (slider + mute toggle).
+
+    One instance per ``AudioControls`` is created lazily and reused; it is
+    re-positioned and re-synced to the audio state before every show.
+    """
+
+    def __init__(self, controls: "AudioControls") -> None:
+        super().__init__(
+            controls,
+            Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint,
+        )
+        self._ac = controls
+        self._mw = controls._mw
+        self.setObjectName("volumePopup")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        self._mute_btn = QPushButton()
+        self._mute_btn.setObjectName("audioButton")
+        self._mute_btn.setToolTip("静音 / 取消静音")
+        self._mute_btn.clicked.connect(self._on_mute_toggled)
+        layout.addWidget(self._mute_btn)
+
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setRange(0, 100)
+        self._slider.setMinimumWidth(150)
+        self._slider.setStyleSheet(_volume_slider_qss())
+        self._slider.valueChanged.connect(self._on_slider_changed)
+        layout.addWidget(self._slider)
+
+        self._value_label = QLabel()
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._value_label.setStyleSheet(
+            "font-family: monospace; font-size: 12px; color: gray;"
+        )
+        layout.addWidget(self._value_label)
+
+        self._refresh_from_audio()
+
+    def _refresh_from_audio(self) -> None:
+        """Sync slider + mute label from the current audio state."""
+        self._slider.blockSignals(True)
+        self._slider.setValue(int(round(self._mw.audio_manager.volume * 100)))
+        self._slider.blockSignals(False)
+        self._refresh_mute_btn()
+        self._refresh_value_label()
+
+    def _position_near(self, anchor: QWidget) -> None:
+        """Place just above *anchor*, clamped inside the screen geometry."""
+        self.adjustSize()
+        from PyQt6.QtWidgets import QApplication
+        screen = (
+            QApplication.screenAt(anchor.mapToGlobal(anchor.rect().center()))
+            or QApplication.primaryScreen()
+        )
+        geo = screen.availableGeometry()
+        g = anchor.mapToGlobal(anchor.rect().bottomLeft())
+        x = max(geo.left() + 4, min(g.x(), geo.right() - self.width() - 4))
+        y = max(geo.top() + 4, min(g.y() - self.height() - 6, geo.bottom() - self.height() - 4))
+        self.move(x, y)
+
+    def _on_mute_toggled(self) -> None:
+        self._mw.audio_manager.muted = not self._mw.audio_manager.muted
+        self._refresh_mute_btn()
+        self._ac._refresh_volume_icon()
+
+    def _on_slider_changed(self, value: int) -> None:
+        self._mw.audio_manager.volume = value / 100.0
+        if self._mw.audio_manager.muted and value > 0:
+            self._mw.audio_manager.muted = False
+            self._refresh_mute_btn()
+        self._refresh_value_label()
+        self._ac._refresh_volume_icon()
+
+    def _refresh_mute_btn(self) -> None:
+        muted = self._mw.audio_manager.muted
+        self._mute_btn.setText("🔇 静音" if muted else "🔊 未静音")
+
+    def _refresh_value_label(self) -> None:
+        self._value_label.setText(f"{self._slider.value()}%")
+
 
 # ── Rate adjust dialog & slider support ──────────────────────────
-
-
-class _RateSlider(QSlider):
-    """QSlider that reports double-clicks so the rate dialog can open."""
-
-    double_clicked = pyqtSignal()
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        self.double_clicked.emit()
-        event.accept()
 
 
 class _RateButton(QPushButton):
@@ -494,6 +844,30 @@ class _RateAdjustDialog(QDialog):
         """Cancel: restore the rate the dialog was opened with."""
         self._ac.set_rate(self._orig_rate)
         super().reject()
+
+
+def _volume_slider_qss() -> str:
+    """QSS for the compact volume-popup slider (slim groove + small handle)."""
+    _bg, fg, theme, _dark = get_theme_colors()
+    return f"""
+    QSlider::groove:horizontal {{
+        height: 4px;
+        background: {fg};
+        border-radius: 2px;
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {theme};
+        border-radius: 2px;
+    }}
+    QSlider::handle:horizontal {{
+        width: 14px;
+        height: 14px;
+        margin: -5px 0;
+        border-radius: 7px;
+        background: {theme};
+        border: 2px solid rgba(255, 255, 255, 0.4);
+    }}
+    """
 
 
 def _big_slider_qss() -> str:

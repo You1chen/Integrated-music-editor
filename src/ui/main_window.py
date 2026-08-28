@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl
+from PyQt6.QtCore import QEvent, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -36,6 +36,10 @@ class MainWindow(QMainWindow):
     Orchestrates all shared state and connects signals between components.
     """
 
+    # Like-state changes (path, liked) — lets every AudioControls instance
+    # (footer + expanded editor) stay in sync when one of them toggles a like.
+    liked_changed = pyqtSignal(str, bool)
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -55,6 +59,10 @@ class MainWindow(QMainWindow):
         self._sync_active = False
         self._saved_play_mode: PlayMode = PlayMode.SINGLE
         self._playlist_panel = None
+
+        # Lyrics-axis visibility (home page) — single source of truth so the
+        # footer and expanded-editor toggles never diverge.
+        self._lyric_axis_visible = True
 
         # Guard against _save_state re-creating draft during close
         self._closing = False
@@ -542,6 +550,23 @@ class MainWindow(QMainWindow):
     def set_play_mode(self, mode: PlayMode) -> None:
         """Set the playback mode (from the footer mode menu)."""
         self.playlist.set_mode(mode)
+
+    # ── Lyrics-axis visibility (home page) ───────────────────
+
+    def lyric_axis_visible(self) -> bool:
+        """Current lyrics-axis visibility on the home page."""
+        return self._lyric_axis_visible
+
+    def toggle_lyric_axis(self) -> bool:
+        """Flip lyrics-axis visibility and apply it to the home page.
+
+        Returns the new state, so callers can sync their toggle button.
+        """
+        self._lyric_axis_visible = not self._lyric_axis_visible
+        home = self.content_stack.widget(PageRoute.HOME)
+        if home is not None:
+            home.set_lyric_axis_visible(self._lyric_axis_visible)
+        return self._lyric_axis_visible
 
     def open_playlist_panel(self) -> None:
         """Open (or re-show) the play-queue panel."""

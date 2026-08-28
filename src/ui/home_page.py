@@ -117,6 +117,12 @@ class HomePage(QWidget):
         # Initial load
         self._load_cover()
 
+    # ── Lyrics axis visibility (driven by the footer toggle) ─────
+
+    def set_lyric_axis_visible(self, visible: bool) -> None:
+        """Show/hide the scrollable lyrics axis."""
+        self._lyric_axis.setVisible(visible)
+
     # ── Cover: theme-aware card styling ──────────────────────────
 
     def _restyle_cover(self) -> None:

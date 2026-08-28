@@ -30,13 +30,13 @@ class FooterBar(QWidget):
         # Plain QWidget subclasses don't paint stylesheet backgrounds
         # without this flag (the #footerBar surface colour would be lost).
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedHeight(80)
+        self.setFixedHeight(100)
         self.setAcceptDrops(True)
 
         self._main_window = main_window
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)
 
         # AudioControls will be set after creation (circular dependency)

@@ -228,6 +228,108 @@ def apply_theme(prefs: dict) -> None:
     }}
     #audioButton:disabled {{
         color: {faint};
+        background: transparent;
+    }}
+    #audioButton:checked {{
+        background-color: {accent_soft_strong};
+        color: {accent};
+    }}
+    #audioButton:checked:disabled {{
+        background: transparent;
+        color: {faint};
+    }}
+
+    /* ── Footer: song info (left zone) ─────────────── */
+    #footerCover {{
+        background-color: {surface};
+        border: 1px solid {border};
+        border-radius: {radius_sm};
+        color: {muted};
+    }}
+    #songTitle {{
+        color: {fg};
+        font-size: 13px;
+        font-weight: 600;
+        background: transparent;
+    }}
+    #songSubtitle {{
+        color: {muted};
+        font-size: 11px;
+        background: transparent;
+    }}
+    #statusBtn {{
+        border: none;
+        background: transparent;
+        color: {muted};
+        padding: 1px 3px;
+        border-radius: {radius_sm};
+        font-size: 14px;
+    }}
+    #statusBtn:hover {{
+        background-color: {accent_soft};
+        color: {fg};
+    }}
+    #statusBtn:pressed {{
+        background-color: {accent};
+        color: {accent_contrast};
+    }}
+    #statusBtn:checked {{
+        color: #e74c3c;
+    }}
+    #statusBtn:disabled {{
+        color: {faint};
+    }}
+
+    /* ── Big circular play button ──────────────────── */
+    #bigPlayBtn {{
+        border: none;
+        border-radius: 23px;
+        background-color: {accent};
+        color: {accent_contrast};
+        font-size: 20px;
+        padding: 0;
+    }}
+    #bigPlayBtn:hover {{
+        background-color: {accent};
+    }}
+    #bigPlayBtn:pressed {{
+        background-color: {accent};
+    }}
+    #bigPlayBtn:disabled {{
+        background-color: {border};
+        color: {faint};
+    }}
+
+    /* ── Text buttons (mode/quality, lyrics toggle) ── */
+    #qualityBtn, #lyricToggleBtn {{
+        border: 1px solid {border_strong};
+        border-radius: {radius_sm};
+        background: transparent;
+        color: {fg};
+        padding: 4px 10px;
+        font-size: 13px;
+    }}
+    #qualityBtn:hover, #lyricToggleBtn:hover {{
+        background-color: {accent_soft};
+        color: {fg};
+        border-color: {accent};
+    }}
+    #lyricToggleBtn:checked {{
+        background-color: {accent};
+        color: {accent_contrast};
+        border-color: {accent};
+        font-weight: 600;
+    }}
+    #qualityBtn:disabled, #lyricToggleBtn:disabled {{
+        color: {faint};
+        border-color: {border};
+    }}
+
+    /* ── Volume popup ──────────────────────────────── */
+    #volumePopup {{
+        background-color: {surface};
+        border: 1px solid {border_strong};
+        border-radius: {radius_sm};
     }}
 
     /* ── Buttons (generic) ─────────────────────────── */
