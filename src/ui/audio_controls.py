@@ -207,7 +207,7 @@ class AudioControls(QWidget):
         self._mode_btn.clicked.connect(self._on_mode_clicked)
         top.addWidget(self._mode_btn)
 
-        self._replay_btn = QPushButton("⏮")
+        self._replay_btn = QPushButton("◀")
         self._replay_btn.setObjectName("audioButton")
         self._replay_btn.setToolTip("上一首")
         self._replay_btn.setFixedSize(34, 34)
@@ -222,7 +222,7 @@ class AudioControls(QWidget):
         self._play_btn.clicked.connect(self._on_play_pause)
         top.addWidget(self._play_btn)
 
-        self._forward_btn = QPushButton("⏭")
+        self._forward_btn = QPushButton("▶")
         self._forward_btn.setObjectName("audioButton")
         self._forward_btn.setToolTip("下一首")
         self._forward_btn.setFixedSize(34, 34)
@@ -316,7 +316,7 @@ class AudioControls(QWidget):
                 self._play_btn.setText("▶")
             else:
                 self._ui_timer.start()
-                self._play_btn.setText("⏸")
+                self._play_btn.setText("❚❚")
             self._update_time_display()
 
         elif data.type == AudioState.DURATION_LOADED:
