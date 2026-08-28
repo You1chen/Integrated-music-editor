@@ -397,7 +397,8 @@ class LrcStateManager(QObject):
 
         The merged line takes:
         - timestamp: earliest non-None timestamp among the selected lines
-        - text: concatenation of all selected lines' text, in order
+        - text: all selected lines' text joined by a single space
+          (blank lines are dropped, so adjacent lyrics never fuse together)
         - translation: the first selected line's translation
 
         *indices* must contain ≥2 consecutive indices; otherwise this is
@@ -419,7 +420,11 @@ class LrcStateManager(QObject):
              for i in sorted_idx if self.lyric[i].time is not None),
             default=None,
         )
-        merged_text = "".join(self.lyric[i].text for i in sorted_idx)
+        merged_text = " ".join(
+            self.lyric[i].text.strip()
+            for i in sorted_idx
+            if self.lyric[i].text.strip()
+        )
         first_translation = self.lyric[first_idx].translation
 
         merged = LyricLine(time=earliest, text=merged_text,

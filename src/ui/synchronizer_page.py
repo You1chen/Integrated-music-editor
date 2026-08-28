@@ -1341,14 +1341,26 @@ class SynchronizerPage(QWidget):
             self._rows[index].enter_split_mode()
 
     def _on_lyric_text_changed(self, index: int, new_text: str) -> None:
-        """Inline edit confirmed — update state."""
+        """Inline edit confirmed — update state (or drop the line when the
+        non-blank text was cleared to blank)."""
         state = self._mw.lrc_state
-        if 0 <= index < len(state.lyric):
-            if new_text != state.lyric[index].text:
-                was_playing = self._pause_for_edit()
-                state.set_text(index, new_text)
-                self._mw.toast_overlay.show_toast("success", f"第 {index + 1} 行歌词已更新")
-                self._resume_after_edit(was_playing)
+        if not (0 <= index < len(state.lyric)):
+            return
+        old_text = state.lyric[index].text
+        if new_text == old_text:
+            return
+        was_playing = self._pause_for_edit()
+        if not new_text.strip() and old_text.strip():
+            state.delete_lines({index})
+            self._mw.toast_overlay.show_toast(
+                "success", f"第 {index + 1} 行歌词已删除"
+            )
+        else:
+            state.set_text(index, new_text)
+            self._mw.toast_overlay.show_toast(
+                "success", f"第 {index + 1} 行歌词已更新"
+            )
+        self._resume_after_edit(was_playing)
 
     def _on_lyric_split_done(self, index: int, cleaned_text: str, positions: list) -> None:
         """Inline split confirmed — update state with split."""
