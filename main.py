@@ -67,6 +67,8 @@ def main() -> None:
     # Playlist page (route 5) — scan folders, browse songs
     playlist = PlaylistPage(window)
     window.content_stack.register_page(PageRoute.PLAYLIST, playlist)
+    # Keep the library's liked state in sync with the footer like button.
+    window.liked_changed.connect(playlist.sync_liked)
 
     # ── Create Audio Controls and wire into footer ──────
     audio_controls = AudioControls(window)

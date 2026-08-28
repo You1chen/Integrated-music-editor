@@ -1,9 +1,9 @@
 """Audio controls — custom player bar (three-zone layout).
 
 Left   — cover placeholder + song info (title/subtitle) + like/comment/more.
-Middle — transport row (shuffle · prev · big circular play · next · volume)
+Middle — transport row (mode · prev · big circular play · next · volume)
          + progress row (current time · timeline/waveform · rate chip · total).
-Right  — playback-mode text button · lyrics-display toggle · playlist icon.
+Right  — lyrics-display toggle · playlist icon.
 
 The same widget is used in the main footer and inside the expanded lyric
 editor; shared audio/playlist state is wired internally so both instances
@@ -39,6 +39,21 @@ if TYPE_CHECKING:
     from PyQt6.QtGui import QMouseEvent
 
     from .main_window import MainWindow
+
+
+# ── Playback-mode icons (shown on the mode button + its menu) ──
+MODE_ICONS = {
+    PlayMode.SINGLE: "▶",       # 单次播放 — play once
+    PlayMode.SEQUENTIAL: "▶▶",  # 顺序播放 — play through in order
+    PlayMode.LOOP: "↻",         # 循环播放 — repeat all
+    PlayMode.SINGLE_LOOP: "↻¹", # 单曲循环 — repeat one
+    PlayMode.SHUFFLE: "⇄",      # 随机播放 — shuffle
+}
+
+
+def _mode_icon_text(mode: PlayMode) -> str:
+    """Return the icon glyph for a playback mode."""
+    return MODE_ICONS.get(mode, "▶")
 
 
 # ── Playback rate: the log-scale slider maps [-100, 100] → ln(rate) ∈ [-1, 1] ──
@@ -79,7 +94,6 @@ class AudioControls(QWidget):
         self._fixed: Fixed = 3
         self._paused = True
         self._waveform_visible = False
-        self._prev_mode: PlayMode = PlayMode.SEQUENTIAL
 
         # Timer for periodic UI refresh during playback
         self._ui_timer = QTimer(self)
@@ -186,13 +200,12 @@ class AudioControls(QWidget):
         top.setSpacing(14)
         top.addStretch()
 
-        self._shuffle_btn = QPushButton("⇄")
-        self._shuffle_btn.setObjectName("audioButton")
-        self._shuffle_btn.setCheckable(True)
-        self._shuffle_btn.setToolTip("随机播放")
-        self._shuffle_btn.setFixedSize(34, 34)
-        self._shuffle_btn.clicked.connect(self._on_shuffle_clicked)
-        top.addWidget(self._shuffle_btn)
+        self._mode_btn = QPushButton(_mode_icon_text(self._mw.playlist.mode))
+        self._mode_btn.setObjectName("audioButton")
+        self._mode_btn.setToolTip("播放模式")
+        self._mode_btn.setFixedSize(34, 34)
+        self._mode_btn.clicked.connect(self._on_mode_clicked)
+        top.addWidget(self._mode_btn)
 
         self._replay_btn = QPushButton("⏮")
         self._replay_btn.setObjectName("audioButton")
@@ -252,7 +265,7 @@ class AudioControls(QWidget):
         self._rate_btn = _RateButton("×1.00")
         self._rate_btn.setObjectName("audioButton")
         self._rate_btn.setToolTip("单击重置为 1.00 · 双击输入/调整播放速度")
-        self._rate_btn.setFixedWidth(52)
+        self._rate_btn.setFixedWidth(64)
         self._rate_btn.clicked.connect(self._on_rate_clicked)
         self._rate_btn.double_clicked.connect(self._open_rate_dialog)
         bottom.addWidget(self._rate_btn)
@@ -272,16 +285,6 @@ class AudioControls(QWidget):
         right = QHBoxLayout()
         right.setSpacing(8)
         right.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-
-        # ── Playback-mode text button (menu lists all modes) ──
-        self._mode_btn = QPushButton(PLAY_MODE_LABELS[PlayMode.SINGLE])
-        self._mode_btn.setObjectName("qualityBtn")
-        self._mode_btn.setToolTip(
-            f"播放模式：{PLAY_MODE_LABELS[PlayMode.SINGLE]}"
-        )
-        self._mode_btn.setFixedHeight(30)
-        self._mode_btn.clicked.connect(self._on_mode_clicked)
-        right.addWidget(self._mode_btn)
 
         # ── Lyrics-display toggle (bound to the home lyric axis) ──
         self._lyric_btn = QPushButton()
@@ -363,16 +366,14 @@ class AudioControls(QWidget):
         self._timeline.blockSignals(False)
 
     def update_mode_label(self, mode: PlayMode) -> None:
-        """Refresh the mode text button + shuffle highlight."""
+        """Refresh the mode icon button + its tooltip."""
         label = PLAY_MODE_LABELS.get(mode, PLAY_MODE_LABELS[PlayMode.SINGLE])
-        self._mode_btn.setText(label)
+        self._mode_btn.setText(_mode_icon_text(mode))
         self._mode_btn.setToolTip(f"播放模式：{label}")
-        self._shuffle_btn.setChecked(mode == PlayMode.SHUFFLE)
 
     def set_mode_lock(self, locked: bool) -> None:
         """Disable mode switching while lyrics are being edited."""
         self._mode_btn.setEnabled(not locked)
-        self._shuffle_btn.setEnabled(not locked)
 
     def set_rate(self, rate: float) -> None:
         """Apply a playback rate and persist it if the config asks to."""
@@ -475,19 +476,6 @@ class AudioControls(QWidget):
 
     # ── Middle-zone handlers ────────────────────────────────
 
-    def _on_shuffle_clicked(self) -> None:
-        mode = self._mw.playlist.mode
-        if mode == PlayMode.SHUFFLE:
-            prev = (
-                self._prev_mode
-                if self._prev_mode != PlayMode.SHUFFLE
-                else PlayMode.SEQUENTIAL
-            )
-            self._mw.set_play_mode(prev)
-        else:
-            self._prev_mode = mode
-            self._mw.set_play_mode(PlayMode.SHUFFLE)
-
     def _on_prev(self) -> None:
         self._mw.playlist.prev()
 
@@ -532,14 +520,16 @@ class AudioControls(QWidget):
         self._mw.open_playlist_panel()
 
     def _on_mode_clicked(self) -> None:
-        """Open a menu so the user picks a playback mode freely."""
+        """Open a menu (icon + label per mode) so the user picks freely."""
         menu = QMenu(self)
         group = QActionGroup(menu)
         group.setExclusive(True)
 
         current = self._mw.playlist.mode
         for mode in PLAY_MODE_ORDER:
-            action = menu.addAction(PLAY_MODE_LABELS[mode])
+            action = menu.addAction(
+                f"{_mode_icon_text(mode)}  {PLAY_MODE_LABELS[mode]}"
+            )
             action.setCheckable(True)
             action.setChecked(mode == current)
             action.triggered.connect(

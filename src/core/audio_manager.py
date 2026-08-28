@@ -214,19 +214,47 @@ class AudioManager(QObject):
         Returns a QPixmap on success, or None when no cover is embedded.
         Safe to call from any thread — catches all exceptions internally.
         """
+        # 1) Qt multimedia metadata (CoverArtImage / ThumbnailImage).
         try:
             from PyQt6.QtMultimedia import QMediaMetaData
             meta = self._player.metaData()
             for key in (QMediaMetaData.Key.CoverArtImage,
                         QMediaMetaData.Key.ThumbnailImage):
                 variant = meta.value(key)
-                if variant.isValid():
+                if variant is not None and variant.isValid():
                     from PyQt6.QtGui import QImage, QPixmap
                     img = variant.value(QImage)
                     if img and not img.isNull():
                         return QPixmap.fromImage(img)
         except Exception:
             pass
+
+        # 2) mutagen fallback — Qt's FFmpeg backend often leaves
+        #    CoverArtImage empty even when the file embeds a cover.
+        path = self.local_path
+        if path:
+            try:
+                import mutagen
+                from PyQt6.QtGui import QPixmap
+                from mutagen.id3 import APIC, ID3
+                audio = mutagen.File(path)
+                if audio is not None:
+                    tags = getattr(audio, "tags", None)
+                    # ID3 (MP3)
+                    if isinstance(tags, ID3):
+                        apic = tags.getall("APIC")
+                        if apic:
+                            pix = QPixmap()
+                            if pix.loadFromData(apic[0].data):
+                                return pix
+                    # FLAC / Ogg native pictures
+                    pics = getattr(audio, "pictures", None)
+                    if pics:
+                        pix = QPixmap()
+                        if pix.loadFromData(pics[0].data):
+                            return pix
+            except Exception:
+                pass
         return None
 
     # ── Internal Signal Handlers ───────────────────────────────

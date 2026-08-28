@@ -915,6 +915,28 @@ class PlaylistPage(QScrollArea):
             liked_count = sum(1 for s in self._all_songs if s.get("liked"))
             self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
             self._do_apply_filter()
+        # Broadcast so the footer / expanded-editor like button stays in sync.
+        self._mw.liked_changed.emit(path, liked)
+
+    def sync_liked(self, path: str, liked: bool) -> None:
+        """Sync a song's liked state from the footer / expanded-editor.
+
+        The footer already persisted the flag via ``toggle_playlist_like``;
+        here we only reflect it into the in-memory library + visible rows.
+        """
+        norm = os.path.normpath
+        for s in self._all_songs:
+            if norm(s.get("path", "")) == norm(path):
+                s["liked"] = liked
+                break
+        for branch in self._branches:
+            for row in branch.collect_rows():
+                if norm(row._song.get("path", "")) == norm(path):
+                    row.update_song(row._song)
+        if self._show_liked_only:
+            liked_count = sum(1 for s in self._all_songs if s.get("liked"))
+            self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
+            self._do_apply_filter()
 
     # ── Song refresh (called by MetaEditorPage after saving) ──
 
