@@ -302,9 +302,13 @@ class MainWindow(QMainWindow):
         - If ``rememberDraft``: write one draft to AppData/draft.lrc.
         The draft is read back on next launch and immediately deleted.
         """
-        # Stop the drawer's background cover thread so Qt exits cleanly.
+        # Stop background threads (drawer cover loader + waveform decoder)
+        # so Qt exits cleanly.
         if self._playlist_panel is not None:
             self._playlist_panel.shutdown()
+        waveform = getattr(self.footer_bar.audio_controls, "_waveform", None)
+        if waveform is not None:
+            waveform.shutdown()
         if len(self.lrc_state.lyric) > 0:
             self.audio_manager._timer.stop()
             self._closing = True
