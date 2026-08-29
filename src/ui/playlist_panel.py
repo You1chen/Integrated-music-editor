@@ -152,6 +152,8 @@ class _QueueRow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("current", is_current)
+        # Fixed row height so the panel can virtualize (map scroll px ↔ row).
+        self.setFixedHeight(self.COVER + 14)  # 40 cover + 7+7 margins
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 7, 8, 7)
@@ -225,7 +227,12 @@ class _QueueRow(QWidget):
                 "QPushButton:hover { color: #f58ea8; }"
             )
             btn.clicked.connect(handler)
-            btn.setVisible(panel.edit_mode)
+            # Keep the buttons hidden during construction: showing an
+            # unparented widget is ~15ms each (Qt styles orphaned widgets
+            # slowly), which adds ~45ms per row in edit mode.  The row is
+            # shown only *after* being inserted into the layout, where
+            # ``set_edit_mode`` shows the buttons at ~0.1ms.
+            btn.setVisible(False)
             self._edit_btns.append(btn)
             lay.addWidget(btn)
 
@@ -347,7 +354,14 @@ class PlaylistPanel(QWidget):
         super().__init__(main_window)
         self._mw = main_window
         self.edit_mode = False
-        self._rows: list[_QueueRow] = []
+        # Only the rows in (and near) the viewport are instantiated — the queue
+        # can hold hundreds of songs and eager-building them all freezes the UI
+        # for seconds. _rows maps display position -> row widget; positions far
+        # outside the viewport are dropped and re-created lazily on scroll.
+        self._rows: dict[int, _QueueRow] = {}
+        self._filtered_indices: list[int] = []  # display order -> queue index
+        self._row_h = _QueueRow.COVER + 14  # fixed row height (see _QueueRow)
+        self._updating = False
         self._cover_cache: dict[str, QImage] = {}
         self._cover_pending: set[str] = set()
         self._closing = False
@@ -446,7 +460,7 @@ class PlaylistPanel(QWidget):
         self._empty.setStyleSheet("font-size: 13px; color: gray; padding: 40px;")
         root.addWidget(self._empty)
 
-        # ── Scrollable queue ──
+        # ── Scrollable queue (virtualized: only visible rows exist) ──
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -455,8 +469,13 @@ class PlaylistPanel(QWidget):
         self._rows_layout = QVBoxLayout(self._rows_container)
         self._rows_layout.setContentsMargins(6, 4, 6, 4)
         self._rows_layout.setSpacing(0)
+        # The top spacer offsets the laid-out rows by the scrolled-away amount;
+        # the trailing stretch keeps the visible block top-aligned.
+        self._top_spacer = QWidget()
+        self._rows_layout.addWidget(self._top_spacer)
         self._rows_layout.addStretch()
         self._scroll.setWidget(self._rows_container)
+        self._scroll.verticalScrollBar().valueChanged.connect(self._update_visible_rows)
         root.addWidget(self._scroll, stretch=1)
 
     # ── Drawer open/close + positioning ───────────────────────
@@ -470,6 +489,9 @@ class PlaylistPanel(QWidget):
         self.show()
         self.raise_()
         self.setFocus()
+        # The viewport has its real size only after layout — rebuild the
+        # visible window now (and on every resize) so rows fill the drawer.
+        QTimer.singleShot(0, self._update_visible_rows)
         self._animate_to(start, target, 200, QEasingCurve.Type.OutCubic)
 
     def close_drawer(self) -> None:
@@ -486,6 +508,11 @@ class PlaylistPanel(QWidget):
         # The ☰ button reflects the panel's visible state — re-sync it now
         # that the drawer is finally hidden.
         self._mw._sync_playlist_btn()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # The viewport grew/shrunk — refresh the visible row window.
+        self._update_visible_rows()
 
     def _stop_anim(self) -> None:
         """Cancel any slide animation (e.g. window resize)."""
@@ -513,12 +540,21 @@ class PlaylistPanel(QWidget):
     # ── Rebuild / refresh ─────────────────────────────────────
 
     def _rebuild(self) -> None:
+        """Refresh the list view from the queue (only visible rows are built).
+
+        The queue is just data (a list + a playing pointer — exactly like the
+        歌单 page).  Rebuilding here must never construct hundreds of row
+        widgets on the main thread: that is what froze the UI for seconds and
+        left the phantom "corner" window behind.  We only remember *which*
+        queue indices the filter allows (``_filtered_indices``) and let
+        :meth:`_update_visible_rows` instantiate the handful near the viewport.
+        """
         # Deleting a row while one of its buttons/labels still has an active
         # tooltip orphans the tooltip window (a phantom QLabel keeps popping
         # up and blocks mouse input near the drawer's right edge). Hide any
         # tooltip first so the rebuild can never leave one behind.
         QToolTip.hideText()
-        for row in self._rows:
+        for row in list(self._rows.values()):
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
@@ -539,21 +575,90 @@ class PlaylistPanel(QWidget):
             if p not in paths:
                 del self._cover_cache[p]
 
-        for i, song in enumerate(queue):
-            if text and text not in self._haystack(song):
-                continue
-            row = _QueueRow(self, i, song, is_current=(i == current))
-            self._rows.append(row)
-            self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
-            row.set_edit_mode(self.edit_mode)
-            self._request_cover(song.get("path"), row)
+        # Display order (after the search filter) -> queue index.
+        self._filtered_indices = [
+            i for i, song in enumerate(queue)
+            if not text or text in self._haystack(song)
+        ]
 
+        # Size the container to the full list so the scrollbar spans every
+        # row, then create only the rows that can actually be seen.
+        n = len(self._filtered_indices)
+        self._rows_container.setMinimumHeight(n * self._row_h)
+        self._scroll.verticalScrollBar().setValue(0)
+        self._update_visible_rows()
         self._update_count()
+
+    def _update_visible_rows(self, *_args) -> None:
+        """Create/destroy rows so only those in (or near) the viewport exist.
+
+        Called on every scrollbar move and after a rebuild.  Rows are laid out
+        in display order after a top spacer whose height equals the number of
+        scrolled-away rows, so the scrollbar offset maps 1:1 to visible rows.
+        """
+        if self._updating:
+            return
+        self._updating = True
+        try:
+            n = len(self._filtered_indices)
+            sb = self._scroll.verticalScrollBar()
+            if n == 0:
+                for row in list(self._rows.values()):
+                    self._rows_layout.removeWidget(row)
+                    row.deleteLater()
+                self._rows.clear()
+                self._top_spacer.setFixedHeight(0)
+                return
+            view_h = self._scroll.viewport().height()
+            first = max(0, sb.value() // self._row_h)
+            last = min(n - 1, (sb.value() + view_h) // self._row_h)
+            first = max(0, first - 4)   # small buffer above
+            last = min(n - 1, last + 4)  # and below for smooth scrolling
+
+            # Detach every row from the layout (widgets stay alive).
+            for row in self._rows.values():
+                self._rows_layout.removeWidget(row)
+
+            # Destroy rows outside the window.
+            for d in [d for d in self._rows if not (first <= d <= last)]:
+                row = self._rows.pop(d)
+                row.deleteLater()
+
+            # Instantiate missing rows inside the window.
+            queue = self._mw.playlist.queue
+            current = self._mw.playlist.current_index
+            new_rows: list[_QueueRow] = []
+            for d in range(first, last + 1):
+                if d in self._rows:
+                    continue
+                qidx = self._filtered_indices[d]
+                song = queue[qidx]
+                row = _QueueRow(self, qidx, song, is_current=(qidx == current))
+                self._rows[d] = row
+                new_rows.append(row)
+                self._request_cover(song.get("path"), row)
+
+            # Re-attach rows in ascending order, after the top spacer.
+            insert_at = 1
+            for d in sorted(self._rows):
+                if first <= d <= last:
+                    self._rows_layout.insertWidget(insert_at, self._rows[d])
+                    insert_at += 1
+
+            # Reveal edit-mode buttons only once the row is parented (showing
+            # an orphaned widget is ~15ms/button, ~45ms/row; here it's ~0.1ms).
+            for row in new_rows:
+                row.set_edit_mode(self.edit_mode)
+
+            # Offset the laid-out rows by the scrolled-away amount.
+            self._top_spacer.setFixedHeight(first * self._row_h)
+        finally:
+            self._updating = False
 
     def _refresh_current(self, *_args) -> None:
         """Only re-tint rows when the playing index changes (cheaper than rebuild)."""
         current = self._mw.playlist.current_index
-        for row in self._rows:
+        for row in self._rows.values():
             row.set_current(row._index == current)
 
     def _update_count(self) -> None:
@@ -584,7 +689,7 @@ class PlaylistPanel(QWidget):
     def _on_cover_loaded(self, path: str, img: QImage) -> None:
         self._cover_pending.discard(path)
         self._cover_cache[path] = img
-        for row in self._rows:
+        for row in self._rows.values():
             if row._song.get("path") == path:
                 row.set_cover(img)
 
@@ -593,7 +698,7 @@ class PlaylistPanel(QWidget):
     def _toggle_edit_mode(self) -> None:
         self.edit_mode = not self.edit_mode
         self._edit_btn.setChecked(self.edit_mode)
-        for row in self._rows:
+        for row in self._rows.values():
             row.set_edit_mode(self.edit_mode)
 
     def _on_clear(self) -> None:
@@ -620,21 +725,28 @@ class PlaylistPanel(QWidget):
     def _locate_current(self, scroll: bool = True) -> bool:
         """Scroll to the now-playing queue entry.  Returns True when found.
 
-        If the entry is hidden by the search box, the search is cleared
+        Uses the display-position map (not row widgets) so the target needs no
+        row to exist yet — scrolling there makes ``_update_visible_rows`` build
+        it.  If the entry is hidden by the search box, the search is cleared
         first so the song is reachable again.
         """
         current = self._mw.playlist.current_index
-        row = next((r for r in self._rows if r._index == current), None)
-        if row is None and self._search.text().strip():
+        try:
+            disp = self._filtered_indices.index(current)
+        except ValueError:
+            if not self._search.text().strip():
+                return False
             # filtered out by search — clear it so the entry is reachable
             self._search.clear()
-            QApplication.processEvents()  # let the rebuilt rows lay out
-            row = next((r for r in self._rows if r._index == current), None)
-        if row is not None and scroll:
-            self._rows_container.adjustSize()
+            QApplication.processEvents()  # let _rebuild recompute indices
+            try:
+                disp = self._filtered_indices.index(current)
+            except ValueError:
+                return False
+        if scroll:
             sb = self._scroll.verticalScrollBar()
-            sb.setValue(max(0, min(row.y() - 16, sb.maximum())))
-        return row is not None
+            sb.setValue(max(0, disp * self._row_h - 16))
+        return True
 
     def _on_locate(self) -> None:
         if not self._locate_current():

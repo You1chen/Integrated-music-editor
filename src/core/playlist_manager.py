@@ -163,7 +163,13 @@ class PlaylistManager(QObject):
         if self._config is not None and hasattr(self._config, "remember_mp3_path"):
             self._config.remember_mp3_path(path)
         self._connect_autoplay()
-        self._emit_all()
+        # Only the playing pointer moved — the queue itself is unchanged.
+        # Emitting queue_changed here would make the drawer rebuild every row
+        # on every切歌 (a multi-second GUI freeze on large libraries). The
+        # panel only needs current_changed to re-tint the now-playing row, and
+        # the footer already refreshes song info / like state on it too.
+        self.current_changed.emit(index)
+        self._save()
 
     def next(self) -> None:
         """Play the next track in the queue (wraps around)."""
