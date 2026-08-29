@@ -262,6 +262,12 @@ class ExpandEditorDialog(QDialog):
         # ── Play controls (identical to the main window's) ──
         self._audio_controls = self._build_audio_controls()
         layout.addWidget(self._audio_controls)
+        # This second AudioControls owns its own WaveformWidget, which starts
+        # a decoder QThread at construction.  The main window shuts down only
+        # the *footer* bar's waveform on close, so the dialog must stop its
+        # own on the way out — otherwise Qt warns "QThread: Destroyed while
+        # thread '' is still running" and the thread outlives the dialog.
+        self.finished.connect(self._on_finished)
 
         # ── Bottom action row ──
         btn_row = QHBoxLayout()
@@ -304,6 +310,12 @@ class ExpandEditorDialog(QDialog):
         ac.update_state(AudioStateData(AudioState.DURATION_LOADED, mw.audio_manager.duration))
         ac.update_state(AudioStateData(AudioState.RATE_CHANGED, mw.audio_manager.playback_rate))
         return ac
+
+    def _on_finished(self, *_args) -> None:
+        """Stop the dialog's own waveform decoder when it closes."""
+        waveform = getattr(self._audio_controls, "_waveform", None)
+        if waveform is not None:
+            waveform.shutdown()
 
     def _on_submit(self) -> None:
         text = self._editor.toPlainText()
