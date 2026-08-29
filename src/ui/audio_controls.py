@@ -378,8 +378,17 @@ class AudioControls(QWidget):
         self._mode_btn.setToolTip(f"播放模式：{label}")
 
     def set_mode_lock(self, locked: bool) -> None:
-        """Disable mode switching while lyrics are being edited."""
+        """Disable mode + prev/next while lyrics are being edited.
+
+        Single-play only holds the end-of-media behaviour — a manual 上一首/
+        下一首 click would still jump to another song mid-stamp, so the two
+        transport buttons are disabled right alongside the mode button.  This
+        is also invoked by the expand editor's second AudioControls, so both
+        bars stay in sync.
+        """
         self._mode_btn.setEnabled(not locked)
+        self._replay_btn.setEnabled(not locked)
+        self._forward_btn.setEnabled(not locked)
 
     def set_rate(self, rate: float) -> None:
         """Apply a playback rate and persist it if the config asks to."""

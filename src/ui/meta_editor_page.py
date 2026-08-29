@@ -90,6 +90,7 @@ class CoverCropDialog(QDialog):
         self._crop_mode = CROP_RECT
         self._result_data: bytes | None = None
         self._result_mime = "image/png"
+        self._was_cropped = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -142,43 +143,45 @@ class CoverCropDialog(QDialog):
         self._preview.set_crop_mode(self._crop_mode)
 
     def _on_accept(self) -> None:
-        """Crop the image according to the current selection and mode."""
+        """Crop the image according to the current selection and mode.
+
+        Confirming without drawing a crop box (or with a degenerate zero-size
+        box) is *not* an error — the whole image is used as-is.  Only a real
+        crop marks ``was_cropped``.
+        """
         import tempfile
 
+        cropped = self._image
         crop = self._preview.get_image_crop_rect()
-        if crop is None:
-            self.accept()
-            return
+        if crop is not None:
+            x, y, w, h = crop
+            if w > 0 and h > 0:
+                if self._crop_mode in (CROP_SQUARE, CROP_CIRCLE):
+                    # Force square: take the shorter side, center the crop
+                    size = min(w, h)
+                    cx = x + (w - size) // 2
+                    cy = y + (h - size) // 2
+                    cropped = self._image.copy(cx, cy, size, size)
+                else:
+                    cropped = self._image.copy(x, y, w, h)
 
-        x, y, w, h = crop
-        if w <= 0 or h <= 0:
-            self.accept()
-            return
+                self._was_cropped = True
 
-        if self._crop_mode in (CROP_SQUARE, CROP_CIRCLE):
-            # Force square: take the shorter side, center the crop
-            size = min(w, h)
-            cx = x + (w - size) // 2
-            cy = y + (h - size) // 2
-            cropped = self._image.copy(cx, cy, size, size)
-        else:
-            cropped = self._image.copy(x, y, w, h)
+                if self._crop_mode == CROP_CIRCLE:
+                    # Apply circular alpha mask
+                    s = cropped.width()
+                    result = QImage(s, s, QImage.Format.Format_ARGB32)
+                    result.fill(Qt.GlobalColor.transparent)
 
-        if self._crop_mode == CROP_CIRCLE:
-            # Apply circular alpha mask
-            s = cropped.width()
-            result = QImage(s, s, QImage.Format.Format_ARGB32)
-            result.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(result)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    path = QPainterPath()
+                    path.addEllipse(0, 0, s, s)
+                    painter.setClipPath(path)
+                    painter.drawImage(0, 0, cropped)
+                    painter.end()
 
-            painter = QPainter(result)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            path = QPainterPath()
-            path.addEllipse(0, 0, s, s)
-            painter.setClipPath(path)
-            painter.drawImage(0, 0, cropped)
-            painter.end()
-
-            cropped = result
+                    cropped = result
 
         # Save as PNG bytes via temp file (supports transparency)
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
@@ -195,6 +198,11 @@ class CoverCropDialog(QDialog):
     def get_result(self) -> tuple[bytes, str]:
         """Return (image_bytes, mime_type) after the dialog is accepted."""
         return self._result_data or b"", self._result_mime
+
+    @property
+    def was_cropped(self) -> bool:
+        """True when the user drew a real crop box before confirming."""
+        return self._was_cropped
 
 
 class _CropPreview(QWidget):
@@ -921,8 +929,9 @@ class MetaEditorPage(QScrollArea):
 
         self._show_cover_from_data(self._cover_data)
         size_kb = len(self._cover_data) // 1024
+        mark = "已裁剪" if crop_dialog.was_cropped else "原图"
         self._cover_info.setText(
-            f"{os.path.basename(file_path)}\n{size_kb} KB\n(已裁剪)"
+            f"{os.path.basename(file_path)}\n{size_kb} KB\n({mark})"
         )
 
     def _on_clear_cover(self) -> None:
