@@ -268,6 +268,35 @@ class ConfigManager:
         cfg["lastPlaybackRate"] = rate
         self._save_config()
 
+    def get_last_volume(self) -> Dict[str, Any]:
+        """Restore the last-session output volume + mute state.
+
+        Defaults to the QAudioOutput defaults (100% / unmuted) so the first
+        run is unchanged from before persistence existed.
+        """
+        return {
+            "volume": float(self._load_config().get("lastVolume", 1.0)),
+            "muted": bool(self._load_config().get("lastMuted", False)),
+        }
+
+    def set_last_volume(self, volume: float, muted: bool) -> None:
+        """Persist the output volume + mute state (footnote: saved by the
+        volume popup on every change)."""
+        cfg = self._load_config()
+        cfg["lastVolume"] = float(volume)
+        cfg["lastMuted"] = bool(muted)
+        self._save_config()
+
+    def get_last_play_mode(self) -> int:
+        """Restore the last-session playback mode (a ``PlayMode`` int)."""
+        return int(self._load_config().get("lastPlayMode", 0))  # PlayMode.SINGLE
+
+    def set_last_play_mode(self, mode: int) -> None:
+        """Persist the playback mode chosen from the footer mode menu."""
+        cfg = self._load_config()
+        cfg["lastPlayMode"] = int(mode)
+        self._save_config()
+
     # ── Persistent: Keybindings ──────────────────────────
 
     def get_keybindings(self) -> Dict[str, Any]:

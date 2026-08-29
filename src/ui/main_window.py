@@ -567,8 +567,14 @@ class MainWindow(QMainWindow):
     # ── Play queue / playback-mode API ────────────────────────
 
     def set_play_mode(self, mode: PlayMode) -> None:
-        """Set the playback mode (from the footer mode menu)."""
+        """Set the playback mode (from the footer mode menu).
+
+        Persisted here — the only user-facing entry point — rather than in
+        ``playlist.set_mode``, so the sync page's temporary SINGLE lock
+        (which calls ``set_mode`` directly) never overwrites the saved mode.
+        """
         self.playlist.set_mode(mode)
+        self.config.set_last_play_mode(int(mode))
 
     # ── Lyrics-axis visibility (home page) ───────────────────
 

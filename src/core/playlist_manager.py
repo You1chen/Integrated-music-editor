@@ -252,6 +252,13 @@ class PlaylistManager(QObject):
         idx = data.get("index", -1)
         self._queue = songs
         self._current_index = idx if 0 <= idx < len(songs) else -1
+        # Restore the last-session playback mode (defaults to SINGLE when the
+        # config predates mode persistence).
+        if hasattr(self._config, "get_last_play_mode"):
+            try:
+                self._mode = PlayMode(self._config.get_last_play_mode())
+            except (TypeError, ValueError):
+                self._mode = PlayMode.SINGLE
 
     def _save(self) -> None:
         """Persist the queue + current index (best-effort, skipped without config)."""

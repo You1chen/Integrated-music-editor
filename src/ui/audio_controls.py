@@ -519,6 +519,14 @@ class AudioControls(QWidget):
         )
         self._volume_btn.setText("🔇" if muted else "🔊")
 
+    def refresh_volume_icon(self) -> None:
+        """Public: sync the volume-button glyph with the audio state.
+
+        Used at startup after restoring the saved volume/mute, so the footer
+        icon reflects the restored state before the popup is ever opened.
+        """
+        self._refresh_volume_icon()
+
     # ── Right-zone handlers ─────────────────────────────────
 
     def _on_lyric_toggle_clicked(self) -> None:
@@ -714,6 +722,7 @@ class _VolumePopup(QDialog):
         self._mw.audio_manager.muted = not self._mw.audio_manager.muted
         self._refresh_mute_btn()
         self._ac._refresh_volume_icon()
+        self._persist_volume()
 
     def _on_slider_changed(self, value: int) -> None:
         self._mw.audio_manager.volume = value / 100.0
@@ -722,6 +731,15 @@ class _VolumePopup(QDialog):
             self._refresh_mute_btn()
         self._refresh_value_label()
         self._ac._refresh_volume_icon()
+        self._persist_volume()
+
+    def _persist_volume(self) -> None:
+        """Remember the output volume + mute for the next session."""
+        config = getattr(self._mw, "config", None)
+        if config is not None and hasattr(config, "set_last_volume"):
+            config.set_last_volume(
+                self._mw.audio_manager.volume, self._mw.audio_manager.muted
+            )
 
     def _refresh_mute_btn(self) -> None:
         muted = self._mw.audio_manager.muted

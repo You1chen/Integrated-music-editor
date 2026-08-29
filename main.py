@@ -79,6 +79,13 @@ def main() -> None:
         last_rate = window.config.get_last_playback_rate()
         window.audio_manager.playback_rate = last_rate
 
+    # Restore last-session output volume + mute (defaults are the QAudioOutput
+    # defaults, so a first run is unchanged).
+    saved_volume = window.config.get_last_volume()
+    window.audio_manager.volume = saved_volume["volume"]
+    window.audio_manager.muted = saved_volume["muted"]
+    audio_controls.refresh_volume_icon()
+
     # ── Apply initial theme from saved preferences ──────
     saved_prefs = window.config.get_preferences()
     apply_theme(saved_prefs)
