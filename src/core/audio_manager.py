@@ -37,6 +37,43 @@ class AudioStateData:
     payload: Any
 
 
+def extract_embedded_cover_image(path: str):
+    """Read embedded cover art from *path* and return a QImage (or None).
+
+    Mirrors the mutagen branch of :meth:`AudioManager.cover_image` but works
+    for any file path (not just the currently-loaded one), and is safe to
+    call from a worker thread (only value types like QImage are produced,
+    no GUI objects involved).
+    """
+    if not path:
+        return None
+    try:
+        from PyQt6.QtGui import QImage
+        import mutagen
+        from mutagen.id3 import APIC, ID3
+
+        audio = mutagen.File(path)
+        if audio is None:
+            return None
+        tags = getattr(audio, "tags", None)
+        # ID3 (MP3)
+        if isinstance(tags, ID3):
+            apic = tags.getall("APIC")
+            if apic:
+                img = QImage.fromData(apic[0].data)
+                if not img.isNull():
+                    return img
+        # FLAC / Ogg native pictures
+        pics = getattr(audio, "pictures", None)
+        if pics:
+            img = QImage.fromData(pics[0].data)
+            if not img.isNull():
+                return img
+    except Exception:
+        pass
+    return None
+
+
 class AudioManager(QObject):
     """QMediaPlayer wrapper providing the same API as the web audioRef.
 
@@ -231,30 +268,10 @@ class AudioManager(QObject):
 
         # 2) mutagen fallback — Qt's FFmpeg backend often leaves
         #    CoverArtImage empty even when the file embeds a cover.
-        path = self.local_path
-        if path:
-            try:
-                import mutagen
-                from PyQt6.QtGui import QPixmap
-                from mutagen.id3 import APIC, ID3
-                audio = mutagen.File(path)
-                if audio is not None:
-                    tags = getattr(audio, "tags", None)
-                    # ID3 (MP3)
-                    if isinstance(tags, ID3):
-                        apic = tags.getall("APIC")
-                        if apic:
-                            pix = QPixmap()
-                            if pix.loadFromData(apic[0].data):
-                                return pix
-                    # FLAC / Ogg native pictures
-                    pics = getattr(audio, "pictures", None)
-                    if pics:
-                        pix = QPixmap()
-                        if pix.loadFromData(pics[0].data):
-                            return pix
-            except Exception:
-                pass
+        img = extract_embedded_cover_image(self.local_path)
+        if img is not None:
+            from PyQt6.QtGui import QPixmap
+            return QPixmap.fromImage(img)
         return None
 
     # ── Internal Signal Handlers ───────────────────────────────

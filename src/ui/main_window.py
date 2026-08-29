@@ -217,6 +217,18 @@ class MainWindow(QMainWindow):
                 self.audio_manager.toggle()
                 return True
 
+        # ── Esc closes the playlist drawer (not while a modal dialog or a
+        #    popup menu like the import menu has grabbed input) ──
+        if (
+            event.key() == Qt.Key.Key_Escape
+            and self._playlist_panel is not None
+            and self._playlist_panel.isVisible()
+            and QApplication.activeModalWidget() is None
+            and QApplication.activePopupWidget() is None
+        ):
+            self.close_playlist_panel()
+            return True
+
         # ── Don't steal keys from text-input widgets ──
         focus_widget = QApplication.focusWidget()
         if focus_widget is not None and isinstance(
@@ -290,6 +302,9 @@ class MainWindow(QMainWindow):
         - If ``rememberDraft``: write one draft to AppData/draft.lrc.
         The draft is read back on next launch and immediately deleted.
         """
+        # Stop the drawer's background cover thread so Qt exits cleanly.
+        if self._playlist_panel is not None:
+            self._playlist_panel.shutdown()
         if len(self.lrc_state.lyric) > 0:
             self.audio_manager._timer.stop()
             self._closing = True
@@ -568,14 +583,57 @@ class MainWindow(QMainWindow):
             home.set_lyric_axis_visible(self._lyric_axis_visible)
         return self._lyric_axis_visible
 
+    # ── Play-queue drawer (right-side panel) ──────────────────
+
+    def toggle_playlist_panel(self) -> bool:
+        """Open or close the queue drawer.  Returns the new visible state."""
+        if self._playlist_panel is not None and self._playlist_panel.isVisible():
+            self.close_playlist_panel()
+            return False
+        self.open_playlist_panel()
+        return True
+
     def open_playlist_panel(self) -> None:
-        """Open (or re-show) the play-queue panel."""
+        """Create the drawer on demand and slide it in."""
         if self._playlist_panel is None:
             from .playlist_panel import PlaylistPanel
             self._playlist_panel = PlaylistPanel(self)
-        self._playlist_panel.show()
-        self._playlist_panel.raise_()
-        self._playlist_panel.activateWindow()
+        self._playlist_panel.open_drawer()
+        self._sync_playlist_btn()
+
+    def close_playlist_panel(self) -> None:
+        if self._playlist_panel is not None and self._playlist_panel.isVisible():
+            self._playlist_panel.close_drawer()
+            self._sync_playlist_btn()
+
+    def _playlist_panel_target_geometry(self):
+        """Geometry of the open drawer: right-flush, above the footer bar."""
+        from PyQt6.QtCore import QRect
+        panel_w = 360
+        top = self.header_bar.height() + 6
+        footer_h = self.footer_bar.height()
+        x = self.width() - panel_w
+        h = self.height() - top - footer_h
+        return QRect(x, top, panel_w, h)
+
+    def _reposition_playlist_panel(self) -> None:
+        """Keep the drawer glued to the right edge while the window resizes."""
+        if self._playlist_panel is not None and self._playlist_panel.isVisible():
+            self._playlist_panel._stop_anim()
+            self._playlist_panel.setGeometry(self._playlist_panel_target_geometry())
+
+    def _sync_playlist_btn(self) -> None:
+        """Reflect the drawer's visible state on the footer ☰ button."""
+        visible = (
+            self._playlist_panel is not None and self._playlist_panel.isVisible()
+        )
+        controls = self.footer_bar.audio_controls
+        if controls is not None:
+            controls._set_playlist_btn(visible)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reposition_playlist_panel()
 
     def import_to_playlist(self, songs: list[dict]) -> None:
         """Add songs to the queue; start playing when the queue was empty."""
@@ -652,7 +710,7 @@ class MainWindow(QMainWindow):
         # ── Steps ──
         for text in [
             "1. 🗂 歌单媒体库：在「歌单」页选择文件夹，扫描成树状歌单",
-            "2. 📃 播放列表：把歌单导入播放列表，点击底部左侧「播放列表」查看",
+            "2. 📃 播放列表：把歌单导入播放列表，点击底部右侧☰「播放列表」查看",
             "3. ▶ 播放控制：空格键播放/暂停，← → 快进快退 5 秒，底部切换播放模式",
             "4. 📝 歌词制作：在「歌词制作」页导入歌词，播放中按空格打时间戳",
             "5. 🏷 编辑元信息：改标题/歌手/封面，甚至重命名音频文件",
@@ -798,8 +856,8 @@ class MainWindow(QMainWindow):
              "「导入到播放列表」；也可以直接把文件拖到窗口底部。\n"
              "载入后主页会显示封面和滚动歌词轴，波形图会自动生成。"),
             ("② 播放列表与播放模式",
-             "底部左侧「播放列表」按钮打开播放队列，可搜索、移除（-）、"
-             "添加到下一首（+）、查看歌曲信息（…）。\n"
+             "底部右侧☰「播放列表」按钮打开播放队列抽屉，可搜索、移除（-）、"
+             "添加到下一首（+）、查看歌曲信息（…）、清空队列。\n"
              "底部「播放模式」按钮点击后弹出菜单，自由选择：单次播放、"
              "顺序播放、循环播放、单曲循环、随机播放。\n"
              "在「歌词制作」页编辑歌词时，播放模式会锁定为单次播放，"

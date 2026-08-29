@@ -295,10 +295,11 @@ class AudioControls(QWidget):
         self._lyric_btn.clicked.connect(self._on_lyric_toggle_clicked)
         right.addWidget(self._lyric_btn)
 
-        # ── Playlist / queue ─────────────────────────────────
+        # ── Playlist / queue drawer ──────────────────────────
         self._playlist_btn = QPushButton("☰")
         self._playlist_btn.setObjectName("audioButton")
         self._playlist_btn.setToolTip("播放列表")
+        self._playlist_btn.setCheckable(True)
         self._playlist_btn.setFixedSize(34, 30)
         self._playlist_btn.clicked.connect(self._on_open_playlist)
         right.addWidget(self._playlist_btn)
@@ -317,6 +318,11 @@ class AudioControls(QWidget):
             else:
                 self._ui_timer.start()
                 self._play_btn.setText("❚❚")
+            # The pause glyph is a pair of full-height bars that renders far
+            # larger than the play triangle — shrink it via QSS property.
+            self._play_btn.setProperty("showPause", not self._paused)
+            self._play_btn.style().unpolish(self._play_btn)
+            self._play_btn.style().polish(self._play_btn)
             self._update_time_display()
 
         elif data.type == AudioState.DURATION_LOADED:
@@ -517,7 +523,13 @@ class AudioControls(QWidget):
         self._lyric_btn.setText("歌词 开" if visible else "歌词 关")
 
     def _on_open_playlist(self) -> None:
-        self._mw.open_playlist_panel()
+        self._mw.toggle_playlist_panel()
+
+    def _set_playlist_btn(self, visible: bool) -> None:
+        """Force the ☰ button's checked state to match the drawer."""
+        self._playlist_btn.blockSignals(True)
+        self._playlist_btn.setChecked(visible)
+        self._playlist_btn.blockSignals(False)
 
     def _on_mode_clicked(self) -> None:
         """Open a menu (icon + label per mode) so the user picks freely."""

@@ -289,6 +289,9 @@ def apply_theme(prefs: dict) -> None:
         font-size: 20px;
         padding: 0;
     }}
+    #bigPlayBtn[showPause="true"] {{
+        font-size: 13px;
+    }}
     #bigPlayBtn:hover {{
         background-color: {accent};
     }}
@@ -330,6 +333,55 @@ def apply_theme(prefs: dict) -> None:
         background-color: {surface};
         border: 1px solid {border_strong};
         border-radius: {radius_sm};
+    }}
+
+    /* ── Playlist drawer (right-side queue panel) ──── */
+    #playlistPanel {{
+        background-color: {surface};
+        border: 1px solid {border_strong};
+        border-right: none;
+        border-top-left-radius: 12px;
+        border-bottom-left-radius: 12px;
+    }}
+    #queueHeader {{
+        background: transparent;
+        border-bottom: 1px solid {border};
+    }}
+    #queueHeaderBtn {{
+        border: none;
+        background: transparent;
+        color: {muted};
+        font-size: 16px;
+        border-radius: {radius_sm};
+    }}
+    #queueHeaderBtn:hover {{
+        background-color: {accent_soft};
+        color: {fg};
+    }}
+    #queueHeaderBtn:checked {{
+        background-color: {accent};
+        color: {accent_contrast};
+    }}
+    #queueRow {{
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid {border};
+        border-radius: 6px;
+    }}
+    #queueRow:hover {{
+        background-color: {accent_soft};
+    }}
+    #queueRow[current="true"] {{
+        background-color: {accent_soft};
+        border-bottom: 1px solid {border};
+        border-radius: 6px;
+    }}
+    #queueRow[current="true"]:hover {{
+        background-color: {accent_soft_strong};
+    }}
+    #queueCover {{
+        background-color: {border};
+        border-radius: 4px;
     }}
 
     /* ── Buttons (generic) ─────────────────────────── */
