@@ -539,8 +539,13 @@ class PlaylistPanel(QWidget):
 
     # ── Rebuild / refresh ─────────────────────────────────────
 
-    def _rebuild(self) -> None:
+    def _rebuild(self, reset_scroll: bool = False) -> None:
         """Refresh the list view from the queue (only visible rows are built).
+
+        *reset_scroll* only for search edits — everything else (including
+       切歌, which never calls this at all) must keep the user's scroll
+        position where it was, otherwise they lose their place in a long
+        queue and have to hit 「◎ 定位」 to find the current song again.
 
         The queue is just data (a list + a playing pointer — exactly like the
         歌单 page).  Rebuilding here must never construct hundreds of row
@@ -575,6 +580,19 @@ class PlaylistPanel(QWidget):
             if p not in paths:
                 del self._cover_cache[p]
 
+        # Anchor the view to the row currently at the top of the viewport so
+        # +/− (add/remove) edits keep the user's place instead of jumping the
+        # list back to the top — that reset is why they had to hit 「◎ 定位」 to
+        # find the current song again.  Only a fresh search resets to the top.
+        sb = self._scroll.verticalScrollBar()
+        anchor_qidx: int | None = None
+        anchor_frac = 0
+        if not reset_scroll:
+            disp = sb.value() // self._row_h
+            if 0 <= disp < len(self._filtered_indices):
+                anchor_qidx = self._filtered_indices[disp]
+                anchor_frac = sb.value() % self._row_h
+
         # Display order (after the search filter) -> queue index.
         self._filtered_indices = [
             i for i, song in enumerate(queue)
@@ -582,10 +600,19 @@ class PlaylistPanel(QWidget):
         ]
 
         # Size the container to the full list so the scrollbar spans every
-        # row, then create only the rows that can actually be seen.
+        # row, then restore the view (or top it for a fresh search).
         n = len(self._filtered_indices)
         self._rows_container.setMinimumHeight(n * self._row_h)
-        self._scroll.verticalScrollBar().setValue(0)
+        target = 0
+        if anchor_qidx is not None:
+            try:
+                new_disp = self._filtered_indices.index(anchor_qidx)
+            except ValueError:
+                new_disp = 0  # the anchored row was removed — start at top
+            target = new_disp * self._row_h + anchor_frac
+        # setValue clamps to the current range; Qt recomputes the true range
+        # on the next layout pass, which is fine — the value is always inside it.
+        sb.setValue(target)
         self._update_visible_rows()
         self._update_count()
 
@@ -718,7 +745,9 @@ class PlaylistPanel(QWidget):
     # ── Search ────────────────────────────────────────────────
 
     def _on_search_changed(self, _text: str) -> None:
-        self._rebuild()
+        # A new search shows a fresh result list from the top; every other
+        # rebuild (e.g. +/− edits) keeps the current scroll anchor instead.
+        self._rebuild(reset_scroll=True)
 
     # ── Locate now-playing entry ──────────────────────────────
 
