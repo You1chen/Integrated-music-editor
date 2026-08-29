@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -512,6 +513,11 @@ class PlaylistPanel(QWidget):
     # ── Rebuild / refresh ─────────────────────────────────────
 
     def _rebuild(self) -> None:
+        # Deleting a row while one of its buttons/labels still has an active
+        # tooltip orphans the tooltip window (a phantom QLabel keeps popping
+        # up and blocks mouse input near the drawer's right edge). Hide any
+        # tooltip first so the rebuild can never leave one behind.
+        QToolTip.hideText()
         for row in self._rows:
             self._rows_layout.removeWidget(row)
             row.deleteLater()
