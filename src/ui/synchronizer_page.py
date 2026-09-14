@@ -1,14 +1,4 @@
-"""Synchronizer page — the core lyrics timing tool (replaces synchronizer.tsx).
-
-Displays lyrics lines with clickable timestamp buttons,
-lets the user insert/remove timestamps while audio plays, using keyboard shortcuts.
-
-Sub-widgets and large dialog flows live in the ``.synchronizer`` sub-package:
-- ``._lyric_input``  : ``_LyricInput``
-- ``._lyric_row``    : ``_LyricRow``
-- ``._translation_row`` : ``_TranslationRow``
-- ``._ai_assist``    : AI translate dialog, prompt generation, pattern matching
-"""
+"""Synchronizer page — the core lyrics timing tool."""
 
 from __future__ import annotations
 
@@ -62,9 +52,7 @@ def _mp3_to_lrc_path(mp3_path: str) -> str:
 
 
 class SynchronizerPage(QWidget):
-    """Core timing tool: shows lyric lines with timestamp buttons,
-    handles keyboard input for timestamps.
-    """
+    """Core timing tool: shows lyric lines with timestamp buttons and handles keyboard input."""
 
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__()
@@ -74,29 +62,23 @@ class SynchronizerPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Toolbar ───────────────────────────────────
         self._toolbar = self._create_toolbar()
         layout.addLayout(self._toolbar)
 
-        # ── Lyric input box (top of lyrics list) ──────
         self._lyric_input = _LyricInput(self)
         self._lyric_input.submit_requested.connect(self._on_lyric_input_submit)
+        self._lyric_input.hide()
+        layout.addWidget(self._lyric_input)
 
-        self._btn_expand = QPushButton("展开")
+        self._btn_expand = QPushButton("⤢")
+        self._btn_expand.setParent(self._lyric_input)
         self._btn_expand.setToolTip("展开为大幅歌词编辑窗口")
-        self._btn_expand.setFixedWidth(64)
+        self._btn_expand.setFixedSize(26, 26)
+        self._btn_expand.setFont(QFont("Segoe UI Symbol", 13))
+        self._btn_expand.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_expand.clicked.connect(self._on_expand_input)
+        QTimer.singleShot(0, self._reposition_expand_button)
 
-        self._input_container = QWidget()
-        input_layout = QHBoxLayout(self._input_container)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(4)
-        input_layout.addWidget(self._lyric_input, stretch=1)
-        input_layout.addWidget(self._btn_expand)
-        self._input_container.hide()
-        layout.addWidget(self._input_container)
-
-        # ── Scroll area for lyric rows ────────────────
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -112,39 +94,27 @@ class SynchronizerPage(QWidget):
         self._scroll.setWidget(self._rows_container)
         layout.addWidget(self._scroll, stretch=1)
 
-        # ── Detect background clicks for deselection ──
         self._scroll.viewport().installEventFilter(self)
 
-        # Typing new lyrics = an editing session: pause on focus, resume on submit.
         self._lyric_input.installEventFilter(self)
 
-        # ── Space Button (optional, absolute-positioned) ─
         self._space_btn: QPushButton | None = None
 
-        # ── Row widgets cache ─────────────────────────
         self._rows: list[_LyricRow] = []
         self._trans_rows: list[_TranslationRow] = []
 
-        # ── State ─────────────────────────────────────
         self._suppress_refresh = False
         self._translation_mode = False
-        self._append_target_index: int | None = None  # row index for append-after mode
-        self._multi_selected: set[int] = set()  # transient multi-selection
-        # Was playback running before the current editing session paused it?
-        self._input_was_playing: bool | None = None   # lyric input box
-        self._trans_was_playing: bool | None = None   # translation row editing
+        self._append_target_index: int | None = None
+        self._multi_selected: set[int] = set()
+        self._input_was_playing: bool | None = None
+        self._trans_was_playing: bool | None = None
 
-        # Connect state changes
         self._mw.lrc_state.state_changed.connect(self._refresh_rows)
 
-        # Re-read theme colors when the user switches theme (rows cache
-        # their colors from update_state, which only runs on state_changed).
         theme_events.changed.connect(self._refresh_rows)
 
-        # Initial render
         self._rebuild_all()
-
-    # ── Toolbar ─────────────────────────────────────────────
 
     def _create_toolbar(self) -> QHBoxLayout:
         """Build the top toolbar with action buttons and mode toggle."""
@@ -152,7 +122,6 @@ class SynchronizerPage(QWidget):
         toolbar.setContentsMargins(8, 4, 8, 4)
         toolbar.setSpacing(6)
 
-        # Translate toggle button
         self._btn_translate = QPushButton("翻译")
         self._btn_translate.setToolTip("切换翻译编辑模式")
         self._btn_translate.setCheckable(True)
@@ -160,38 +129,32 @@ class SynchronizerPage(QWidget):
         self._btn_translate.clicked.connect(self._on_translate_toggle)
         toolbar.addWidget(self._btn_translate)
 
-        # Pattern match button (only visible in translation mode)
         self._btn_pattern_match = QPushButton("模式匹配")
         self._btn_pattern_match.setToolTip("从粘贴的翻译文本中匹配翻译")
         self._btn_pattern_match.clicked.connect(self._on_pattern_match)
         self._btn_pattern_match.hide()
         toolbar.addWidget(self._btn_pattern_match)
 
-        # New draft button
         self._btn_new = QPushButton("新建")
         self._btn_new.setToolTip("创建与当前音频同名的空白歌词草稿")
         self._btn_new.clicked.connect(self._on_new_draft)
         toolbar.addWidget(self._btn_new)
 
-        # Import button
         self._btn_import = QPushButton("导入")
         self._btn_import.setToolTip("导入 LRC 文件")
         self._btn_import.clicked.connect(self._on_import)
         toolbar.addWidget(self._btn_import)
 
-        # Export button
         self._btn_export = QPushButton("导出")
         self._btn_export.setToolTip("导出 LRC 文件")
         self._btn_export.clicked.connect(self._on_export)
         toolbar.addWidget(self._btn_export)
 
-        # Edit text button
         self._btn_edit = QPushButton("编辑")
         self._btn_edit.setToolTip("直接编辑歌词文本")
         self._btn_edit.clicked.connect(self._on_edit_text)
         toolbar.addWidget(self._btn_edit)
 
-        # Save button — overwrite source file
         self._btn_save = QPushButton("保存")
         self._btn_save.setToolTip("保存并覆写源 LRC 文件")
         self._btn_save.clicked.connect(self._on_save)
@@ -200,8 +163,6 @@ class SynchronizerPage(QWidget):
         toolbar.addStretch()
 
         return toolbar
-
-    # ── Public API ──────────────────────────────────────────
 
     def set_space_button_visible(self, visible: bool) -> None:
         """Show/hide the on-screen space button (from preferences)."""
@@ -235,27 +196,22 @@ class SynchronizerPage(QWidget):
             f"}}"
         )
 
-    # ── Toolbar Handlers ────────────────────────────────────
-
     def _on_translate_toggle(self) -> None:
-        """Toggle translation editing mode on/off."""
         self._translation_mode = self._btn_translate.isChecked()
         self._btn_pattern_match.setVisible(self._translation_mode)
         self._rebuild_all()
 
     def _on_translation_changed(self, index: int, text: str) -> None:
-        """Live update translation text (no undo push — per-keystroke)."""
+        """Live update translation text on each keystroke."""
         if self._trans_was_playing is None:
             self._trans_was_playing = self._pause_for_edit()
         state = self._mw.lrc_state
         if 0 <= index < len(state.lyric):
             state.lyric[index].translation = text
-        # Emit state_changed so draft is auto-saved and UI stays fresh
         state.state_changed.emit()
 
     def _on_translation_finished(self, index: int) -> None:
-        """User finished editing (Enter / focus loss) — push one undo snapshot
-        and resume playback if the translation session had paused it."""
+        """User finished editing — push one undo snapshot and resume playback."""
         self._mw.lrc_state._push_undo()
         self._resume_after_edit(bool(self._trans_was_playing))
         self._trans_was_playing = None
@@ -263,7 +219,7 @@ class SynchronizerPage(QWidget):
     def _on_ai_assist(
         self, target_text_edit: QPlainTextEdit | None = None
     ) -> None:
-        """Open the AI assist dialog — delegates to ``_ai_assist`` module."""
+        """Open the AI assist dialog."""
         was_playing = self._pause_for_edit()
         try:
             show_ai_assist_dialog(self, target_text_edit)
@@ -271,15 +227,11 @@ class SynchronizerPage(QWidget):
             self._resume_after_edit(was_playing)
 
     def _build_prompt_text(self) -> tuple[str, int] | None:
-        """Build the AI translation prompt — delegates to ``_ai_assist`` module."""
+        """Build the AI translation prompt."""
         return build_prompt_text(self)
 
     def _on_pattern_match(self, initial_text: str = "") -> None:
-        """Open a dialog where user pastes LRC text containing translations.
-
-        When *initial_text* is provided, the text area is pre-filled with it
-        (used by AI auto-translate to feed the API response into matching).
-        """
+        """Open a dialog where user pastes LRC text containing translations."""
         was_playing = self._pause_for_edit()
         dialog = QDialog(self)
         dialog.setWindowTitle("模式匹配 - 匹配翻译")
@@ -290,7 +242,6 @@ class SynchronizerPage(QWidget):
         dlg_layout.setContentsMargins(12, 12, 12, 12)
         dlg_layout.setSpacing(8)
 
-        # Instructions
         instr_label = QLabel(
             "粘贴包含翻译的 LRC 文本，支持两种格式：\n"
             "  ●  [时间戳]歌词 + [相同时间戳]翻译（成对识别）\n"
@@ -308,12 +259,10 @@ class SynchronizerPage(QWidget):
             text_edit.setPlainText(initial_text)
         dlg_layout.addWidget(text_edit, stretch=1)
 
-        # Overwrite mode checkbox
         cb_overwrite = QCheckBox("覆写已有翻译（默认跳过已翻译的行）")
         cb_overwrite.setStyleSheet("font-size: 12px; color: #aaa;")
         dlg_layout.addWidget(cb_overwrite)
 
-        # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
@@ -345,9 +294,6 @@ class SynchronizerPage(QWidget):
                 if not input_text:
                     self._mw.toast_overlay.show_toast("warning", "未输入任何文本")
                     return
-                # Capture checkbox value now — after accept() the dialog
-                # and its children are destroyed, so the lambda cannot
-                # reference cb_overwrite directly.
                 overwrite = cb_overwrite.isChecked()
                 QTimer.singleShot(
                     0,
@@ -357,8 +303,6 @@ class SynchronizerPage(QWidget):
                 )
         finally:
             self._resume_after_edit(was_playing)
-
-    # ── New Draft ──────────────────────────────────────────
 
     def _on_new_draft(self) -> None:
         """Create a blank draft named after the currently loaded audio file."""
@@ -371,23 +315,26 @@ class SynchronizerPage(QWidget):
 
             lrc_path = _mp3_to_lrc_path(mp3_path)
 
+            if os.path.exists(lrc_path):
+                QMessageBox.warning(
+                    self,
+                    "同名文件已存在",
+                    f"已存在同名文件：{os.path.basename(lrc_path)}\n"
+                    "新建草稿保存时会覆盖它，请换一个文件名。",
+                )
+                return
+
             self._mw.lrc_state.init_from_text("", self._mw.trim_options)
             self._mw.config.set_last_lrc_path(lrc_path)
             self._mw.toast_overlay.show_toast("success", f"已创建新草稿：{os.path.basename(lrc_path)}")
         finally:
             self._resume_after_edit(was_playing)
 
-    # ── Import / Export ─────────────────────────────────────
-
     def _on_import(self) -> None:
         """Import LRC file: clear draft → smart import → file browser."""
         was_playing = self._pause_for_edit()
         state = self._mw.lrc_state
 
-        # Stop audio timer during the entire import flow.  Otherwise
-        # refresh() → state_changed → _save_state() would re-create the
-        # draft file between delete_draft() and the user picking a new
-        # LRC (the smart-import and file-browser dialogs are modal).
         timer_was_active = self._mw.audio_manager._timer.isActive()
         self._mw.audio_manager._timer.stop()
 
@@ -395,7 +342,6 @@ class SynchronizerPage(QWidget):
             if len(state.lyric) > 0:
                 state.init_from_text("", self._mw.trim_options)
 
-            # Smart import (when audio is loaded)
             audio = self._mw.audio_manager
             if audio.src and audio.duration > 0 and self._mw.config.get_enable_smart_import():
                 reply = QMessageBox.question(
@@ -409,7 +355,6 @@ class SynchronizerPage(QWidget):
                     self._do_smart_import()
                     return
 
-            # Fallback to file browser
             self._file_browser_import()
         finally:
             if timer_was_active:
@@ -447,12 +392,7 @@ class SynchronizerPage(QWidget):
                 QMessageBox.warning(self, "错误", f"导入失败：{e}")
 
     def _do_smart_import(self) -> None:
-        """Look for ``{audio_stem}.lrc`` next to the MP3 and load it.
-
-        Since drafts are now always deleted before import, we only need to
-        check for the matching LRC file.  Falls back to asking the user
-        whether to create a new empty draft.
-        """
+        """Look for ``{audio_stem}.lrc`` next to the MP3 and load it."""
         mp3_path = self._mw.config.get_last_mp3_path()
         if not mp3_path:
             self._mw.toast_overlay.show_toast("warning", "未找到音频文件路径")
@@ -461,7 +401,6 @@ class SynchronizerPage(QWidget):
 
         lrc_path = _mp3_to_lrc_path(mp3_path)
 
-        # Same-name LRC next to MP3
         if os.path.exists(lrc_path):
             if lrc_path == self._mw.config.get_last_lrc_path():
                 with open(lrc_path, "r", encoding="utf-8") as f:
@@ -478,7 +417,6 @@ class SynchronizerPage(QWidget):
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"加载歌词文件失败：{e}")
         else:
-            # Ask to create new draft
             reply = QMessageBox.question(
                 self,
                 "新建草稿",
@@ -506,7 +444,6 @@ class SynchronizerPage(QWidget):
             if al:
                 parts.append(al)
             else:
-                # Fall back to current audio filename
                 mp3_path = self._mw.config.get_last_mp3_path()
                 if mp3_path:
                     parts.append(os.path.splitext(os.path.basename(mp3_path))[0])
@@ -514,7 +451,6 @@ class SynchronizerPage(QWidget):
                     parts.append("lyrics")
         filename = re.sub(r'[<>:"/\\|?*]', "_", " - ".join(parts)).strip() + ".lrc"
 
-        # Determine initial directory
         default_dir = self._mw.config.get_default_browse_dir()
         last_path = self._mw.config.get_last_lrc_path()
         if last_path and os.path.exists(os.path.dirname(last_path)):
@@ -571,7 +507,6 @@ class SynchronizerPage(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_text = text_edit.toPlainText()
             self._mw.lrc_state.init_from_text(new_text, self._mw.trim_options)
-            # Persist to disk via the same path as the toolbar save
             self._do_save()
         self._resume_after_edit(was_playing)
 
@@ -608,8 +543,6 @@ class SynchronizerPage(QWidget):
         finally:
             self._resume_after_edit(was_playing)
 
-    # ── Save ─────────────────────────────────────────────────
-
     def _on_save(self) -> None:
         """Save current state by overwriting the source LRC file."""
         if self._mw.config.get_show_save_warning():
@@ -618,12 +551,10 @@ class SynchronizerPage(QWidget):
             self._do_save()
 
     def _do_save(self) -> None:
-        """Overwrite the source LRC file (single implementation)."""
+        """Overwrite the source LRC file."""
         text = self._mw.lrc_state.stringify(self._mw.format_options)
         lrc_path = self._mw.config.get_last_lrc_path()
         if not lrc_path:
-            # No source file yet — create one next to the currently
-            # loaded audio (use actual audio source, not persisted path)
             mp3_path = self._mw.audio_manager.local_path
             if mp3_path:
                 lrc_path = _mp3_to_lrc_path(mp3_path)
@@ -631,19 +562,13 @@ class SynchronizerPage(QWidget):
         ok, msg = self._mw.config.overwrite_lrc(text)
         if ok:
             self._mw.toast_overlay.show_toast("success", msg)
-            # Notify listeners (home page lyrics axis, etc.) to refresh
-            # from the current in-memory state — no file re-read needed.
             self._mw.lrc_state.state_changed.emit()
             self._notify_playlist()
         else:
             QMessageBox.warning(self, "错误", msg)
 
     def _notify_playlist(self) -> None:
-        """Best-effort: refresh the playlist's 📝 indicator for this song.
-
-        Saving lyrics creates/overwrites ``{audio_stem}.lrc`` next to the
-        audio, which is what the playlist's has_lrc flag reflects.
-        """
+        """Refresh the playlist's 📝 indicator for this song."""
         try:
             from ..core.constants import PageRoute
             playlist_page = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
@@ -652,7 +577,7 @@ class SynchronizerPage(QWidget):
                 if path:
                     playlist_page.refresh_song(path)
         except Exception:
-            pass  # Best-effort — don't break save on playlist errors
+            pass
 
     def _show_save_warning_dialog(self) -> None:
         """Show the overwrite warning dialog with preview/cancel options."""
@@ -665,7 +590,6 @@ class SynchronizerPage(QWidget):
         dlg_layout.setContentsMargins(20, 20, 20, 20)
         dlg_layout.setSpacing(16)
 
-        # Warning icon + message
         msg_label = QLabel(
             "\"保存\"会覆写你的源文件，\n此操作不可撤销，是否预览覆写效果？"
         )
@@ -673,11 +597,9 @@ class SynchronizerPage(QWidget):
         msg_label.setStyleSheet("font-size: 14px;")
         dlg_layout.addWidget(msg_label)
 
-        # "Never show again" checkbox
         self._save_warning_cb = QCheckBox("不再显示此警告")
         dlg_layout.addWidget(self._save_warning_cb)
 
-        # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
@@ -695,27 +617,22 @@ class SynchronizerPage(QWidget):
         try:
             result = dialog.exec()
 
-            # Persist "never show" preference
             if self._save_warning_cb.isChecked():
                 prefs = self._mw.config.get_preferences()
                 prefs["showSaveWarning"] = False
                 self._mw.update_preferences(prefs)
 
-            # If user closed via X or cancel, do nothing
             if result != QDialog.DialogCode.Accepted:
                 return
 
-            # User confirmed save (after preview)
             self._do_save()
         finally:
             self._resume_after_edit(was_playing)
 
     def _on_save_preview(self, warning_dialog: QDialog) -> None:
         """Preview then confirm save flow from the warning dialog."""
-        # Show preview first
         self._on_preview()
 
-        # After preview closes, ask for final confirmation
         confirm = QDialog(warning_dialog)
         confirm.setWindowTitle("确认覆写")
         confirm.setMinimumWidth(360)
@@ -741,20 +658,10 @@ class SynchronizerPage(QWidget):
         cnf_layout.addLayout(cnf_btn_layout)
 
         if confirm.exec() == QDialog.DialogCode.Accepted:
-            # Close the warning dialog with Accepted to trigger save
             warning_dialog.accept()
 
-    # ── Keyboard Handler ────────────────────────────────────
-
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Handle keyboard shortcuts on this page.
-
-        Ports the onKeydown handler from synchronizer.tsx.
-
-        Note: when a lyric line is selected, the app-wide event filter
-        in MainWindow already intercepts Space (→ timestamp) and blocks
-        audio shortcuts — so those cases never reach this method.
-        """
+        """Handle keyboard shortcuts on this page."""
         action = self._mw.keybinding_manager.get_matched_action(event)
 
         state = self._mw.lrc_state
@@ -833,10 +740,6 @@ class SynchronizerPage(QWidget):
 
         elif action == InputAction.UNDO:
             event.accept()
-            # NOTE: The actual undo + seek-back logic lives in
-            # MainWindow.handle_global_key(), which intercepts Ctrl+Z
-            # before this keyPressEvent ever receives it.  This handler
-            # is a fallback in case event routing changes in the future.
             state.undo()
             self._append_target_index = state.select_index
             self._scroll_to_row(state.select_index)
@@ -903,7 +806,6 @@ class SynchronizerPage(QWidget):
                 state.select(lambda _: 0)
             return
 
-        # Esc → deselect current row
         if event.key() == Qt.Key.Key_Escape and not event.modifiers():
             self._multi_selected.clear()
             state.deselect()
@@ -911,59 +813,43 @@ class SynchronizerPage(QWidget):
             event.accept()
             return
 
-        # Forward audio shortcuts only when no lyric line is selected
         if state.select_index == -1:
             if self._mw.handle_global_key(event):
                 return
 
         super().keyPressEvent(event)
 
-    # ── Event Filter (viewport background clicks) ────────────
-
     def eventFilter(self, obj, event):
-        """Detect clicks on empty space of the scroll area → deselect row.
-
-        Also watches the lyric input box: gaining focus starts an editing
-        session (pause playback once), submitting resumes it.
-
-        Note: the input box is reparented into ``_input_container`` during
-        construction, which fires events *before* ``_scroll`` exists — so all
-        input-box events are consumed by the first branch and never fall
-        through to the scroll-area check.
-        """
+        """Handle scroll-area background clicks and lyric-input focus/resize events."""
         if obj == self._lyric_input:
             if event.type() == QEvent.Type.FocusIn:
                 if self._input_was_playing is None:
                     self._input_was_playing = self._pause_for_edit()
+            elif event.type() == QEvent.Type.Resize:
+                self._reposition_expand_button()
             return super().eventFilter(obj, event)
         if obj == self._scroll.viewport() and event.type() == QEvent.Type.MouseButtonPress:
             pos = event.position().toPoint()
             child = self._scroll.viewport().childAt(pos)
-            # Walk up parent chain — if click is inside a row, let it handle it
             while child is not None:
                 if isinstance(child, (_LyricRow, _TranslationRow)):
                     return False
                 child = child.parentWidget()
-            # Click on empty space → deselect + clear multi-select
             self._multi_selected.clear()
             self._mw.lrc_state.deselect()
             self._append_target_index = None
             return False
         return super().eventFilter(obj, event)
 
-    # ── Internal: Row Management ────────────────────────────
-
     def _rebuild_all(self) -> None:
         """Full rebuild: clear and recreate all rows."""
         self._suppress_refresh = True
 
-        # Remove existing lyric rows
         for row in self._rows:
             self._rows_layout.removeWidget(row)
             row.deleteLater()
         self._rows.clear()
 
-        # Remove existing translation rows
         for row in self._trans_rows:
             self._rows_layout.removeWidget(row)
             row.deleteLater()
@@ -974,12 +860,10 @@ class SynchronizerPage(QWidget):
         theme_color = prefs.get("themeColor", "#f58ea8")
         is_dark = is_dark_theme()
 
-        # Remove stretch (last item)
         if self._rows_layout.count() > 0:
             self._rows_layout.takeAt(self._rows_layout.count() - 1)
 
         for i, line in enumerate(state.lyric):
-            # Create lyric row (always present)
             row = _LyricRow(
                 index=i,
                 line=line,
@@ -1004,7 +888,6 @@ class SynchronizerPage(QWidget):
             self._rows_layout.addWidget(row)
             self._rows.append(row)
 
-            # If translation mode is active, insert a translation row below
             if self._translation_mode:
                 trans_row = _TranslationRow(
                     index=i,
@@ -1019,13 +902,11 @@ class SynchronizerPage(QWidget):
                 self._rows_layout.addWidget(trans_row)
                 self._trans_rows.append(trans_row)
 
-        # Re-add stretch
         self._rows_layout.addStretch()
 
         self._suppress_refresh = False
         self._refresh_rows()
 
-        # Also update input box visibility & styling on full rebuild
         self._update_input_visibility()
         self._restyle_input()
 
@@ -1036,7 +917,6 @@ class SynchronizerPage(QWidget):
 
         state = self._mw.lrc_state
 
-        # Exit edit/split mode on the previously selected row when selection moves
         cur = state.select_index
         prev = getattr(self, "_prev_select_idx", -1)
         if prev != cur and 0 <= prev < len(self._rows):
@@ -1049,18 +929,15 @@ class SynchronizerPage(QWidget):
         theme_color = prefs.get("themeColor", "#f58ea8")
         is_dark = is_dark_theme()
 
-        # Update input box visibility
         self._update_input_visibility()
         self._restyle_input()
         self._restyle_space_button()
 
-        # Rebuild if count changed
         if len(self._rows) != len(state.lyric):
             self._multi_selected.clear()
             self._rebuild_all()
             return
 
-        # Prune stale multi-selection indices
         n = len(state.lyric)
         self._multi_selected = {i for i in self._multi_selected if 0 <= i < n}
 
@@ -1085,7 +962,6 @@ class SynchronizerPage(QWidget):
                 multi_selected=multi_sel,
             )
 
-        # Update translation rows if active
         if self._translation_mode:
             for i, trans_row in enumerate(self._trans_rows):
                 if i < len(state.lyric):
@@ -1096,22 +972,13 @@ class SynchronizerPage(QWidget):
                         multi_selected=(i in self._multi_selected),
                     )
 
-    # ── Internal: Signal Handlers ──────────────────────────
-
     def _get_sync_time(self) -> float:
-        """Get current audio time minus reaction time offset.
-
-        Returns a time shifted backward by ``reactionTimeMs`` milliseconds
-        (clamped to >= 0) so the timestamp lands closer to when the lyric
-        actually started rather than when the user reacted.
-        """
+        """Return current audio time minus the reaction-time offset."""
         reaction_ms = self._mw.config.get_reaction_time_ms()
         return max(0.0, self._mw.audio_manager.current_time - reaction_ms / 1000.0)
 
     def _pause_for_edit(self) -> bool:
-        """Pause playback at the start of an editing session (a dialog is
-        open, or the user is typing/editing lyrics).  Returns True when
-        playback was running, so the caller can resume afterwards."""
+        """Pause playback for an editing session; True when it was playing."""
         audio = self._mw.audio_manager
         was_playing = not audio.paused
         if was_playing:
@@ -1119,9 +986,7 @@ class SynchronizerPage(QWidget):
         return was_playing
 
     def _resume_after_edit(self, was_playing: bool) -> None:
-        """Resume playback after an editing session, but only if it was
-        playing before the session paused it — never auto-start a player
-        that was already paused."""
+        """Resume playback only if the editing session had paused it."""
         if was_playing and self._mw.audio_manager.paused:
             self._mw.audio_manager.toggle()
 
@@ -1133,7 +998,6 @@ class SynchronizerPage(QWidget):
             self._mw.lrc_state.next_(seek_time)
             self._append_target_index = self._mw.lrc_state.select_index
             self._scroll_to_row(self._mw.lrc_state.select_index)
-            # Auto-seek verify
             prefs = self._mw.config.get_preferences()
             if prefs.get("autoSeekVerify", False):
                 delay_ms = int(prefs.get("autoSeekDelay", 1.0) * 1000)
@@ -1147,9 +1011,7 @@ class SynchronizerPage(QWidget):
                 QTimer.singleShot(delay_ms, _seek_back)
 
     def _on_jump_prev_timestamp(self) -> None:
-        """Left arrow (when lyric selected): seek to the previous line's
-        timestamp without changing selection.  Searches upward for the
-        first line with a valid (> 0) timestamp."""
+        """Seek to the previous line's timestamp without changing selection."""
         state = self._mw.lrc_state
         idx = state.select_index
         if idx < 0:
@@ -1161,9 +1023,7 @@ class SynchronizerPage(QWidget):
                 return
 
     def _on_jump_next_timestamp(self) -> None:
-        """Right arrow (when lyric selected): seek to the next line's
-        timestamp without changing selection.  If the immediate next
-        line has timestamp 0 or None (not yet stamped), do nothing."""
+        """Seek to the next line's timestamp without changing selection."""
         state = self._mw.lrc_state
         idx = state.select_index
         if idx < 0:
@@ -1182,13 +1042,7 @@ class SynchronizerPage(QWidget):
             audio.current_time = time
 
     def _on_edit_timestamp(self, index: int) -> None:
-        """Open a dialog to manually edit a timestamp (Ctrl+click / double-click).
-
-        The millisecond part is pre-selected (everything after the last '.',
-        excluding the closing ']'), so fine-tuning is type-and-enter without
-        touching the mouse.  After confirming, the audio seeks to the new
-        timestamp and auto-plays (see ``_parse_and_set_time``).
-        """
+        """Open a dialog to manually edit a timestamp."""
         was_playing = self._pause_for_edit()
         line = self._mw.lrc_state.lyric[index]
         prefs = self._mw.config.get_preferences()
@@ -1199,14 +1053,11 @@ class SynchronizerPage(QWidget):
         dialog.setLabelText("输入时间戳 (mm:ss.xxx)：")
         dialog.setTextValue(current_tag)
 
-        # QInputDialog selects everything on show — override it to select just
-        # the milliseconds, e.g. "[01:12.{523}]".  Runs after the dialog is
-        # shown (singleShot(0) fires on the first exec() event-loop pass).
         line_edit = dialog.findChild(QLineEdit)
         if line_edit and "." in current_tag:
             dot = current_tag.rfind(".")
             start = dot + 1
-            length = len(current_tag) - dot - 2  # exclude the trailing ']'
+            length = len(current_tag) - dot - 2
             if length > 0:
                 QTimer.singleShot(
                     0,
@@ -1220,12 +1071,7 @@ class SynchronizerPage(QWidget):
         self._resume_after_edit(was_playing)
 
     def _parse_and_set_time(self, index: int, tag: str) -> None:
-        """Parse a user-entered timestamp string and set it on the line.
-
-        After the change the audio seeks to the new timestamp and starts
-        playing if it was paused — the fix is immediately audible, the same
-        "reach the timestamp and play" behaviour as stamping during sync.
-        """
+        """Parse a user-entered timestamp string and set it on the line."""
         match = re.match(r"^\[?\s*(\d{1,3}):(\d{1,2}(?:[:.]\d{1,3})?)\s*]?$", tag)
         if not match:
             return
@@ -1233,11 +1079,9 @@ class SynchronizerPage(QWidget):
         ss = float(match.group(2).replace(":", "."))
         time_val = mm * 60 + ss
 
-        # Select the line first, then set time
         self._mw.lrc_state.select(lambda _: index)
         self._mw.lrc_state.set_time(time_val)
 
-        # Seek to the new timestamp and auto-play, like stamping during sync.
         audio = self._mw.audio_manager
         if audio.duration > 0:
             audio.current_time = time_val
@@ -1252,33 +1096,21 @@ class SynchronizerPage(QWidget):
         self.setFocus()
 
     def _on_multi_select_toggled(self, index: int) -> None:
-        """Ctrl+Left-click on text area: toggle row in/out of multi-selection.
-
-        When the multi-selection set is empty and the user starts a new
-        group, the previously single-selected row (select_index) is
-        automatically included so that normal-click + Ctrl-click chains
-        form a single selection group.
-        """
+        """Toggle a row in or out of the multi-selection (Ctrl+click)."""
         if index in self._multi_selected:
             self._multi_selected.discard(index)
         else:
             if not self._multi_selected:
-                # First Ctrl+click — pull the current select_index into the group
                 cur = self._mw.lrc_state.select_index
                 n = len(self._mw.lrc_state.lyric)
                 if 0 <= cur < n and cur != index:
                     self._multi_selected.add(cur)
             self._multi_selected.add(index)
-        # Also set select_index so the primary cursor follows
         self._mw.lrc_state.select(lambda _: index)
         self._refresh_rows()
 
     def _get_effective_selection(self) -> set[int]:
-        """Return the set of indices considered selected for batch operations.
-
-        When multi-select is active, returns a copy of those indices.
-        Otherwise falls back to the single select_index (if valid).
-        """
+        """Return the indices selected for batch operations."""
         if self._multi_selected:
             return set(self._multi_selected)
         idx = self._mw.lrc_state.select_index
@@ -1341,8 +1173,7 @@ class SynchronizerPage(QWidget):
             self._rows[index].enter_split_mode()
 
     def _on_lyric_text_changed(self, index: int, new_text: str) -> None:
-        """Inline edit confirmed — update state (or drop the line when the
-        non-blank text was cleared to blank)."""
+        """Inline edit confirmed — update state, or drop the line when it was cleared."""
         state = self._mw.lrc_state
         if not (0 <= index < len(state.lyric)):
             return
@@ -1363,7 +1194,7 @@ class SynchronizerPage(QWidget):
         self._resume_after_edit(was_playing)
 
     def _on_lyric_split_done(self, index: int, cleaned_text: str, positions: list) -> None:
-        """Inline split confirmed — update state with split."""
+        """Inline split confirmed — update state with the split."""
         state = self._mw.lrc_state
         if not (0 <= index < len(state.lyric)):
             return
@@ -1372,7 +1203,6 @@ class SynchronizerPage(QWidget):
         state.set_text(index, cleaned_text)
         state.split_line(index, positions)
 
-        # Defer scroll so the layout processes new rows first
         target = state.select_index
         QTimer.singleShot(0, lambda: self._scroll_to_row(target))
 
@@ -1384,8 +1214,7 @@ class SynchronizerPage(QWidget):
         self._resume_after_edit(was_playing)
 
     def _on_append_lyric(self, index: int) -> None:
-        """Append a new empty line after the selected row, timestamped at the
-        current audio position minus the reaction time offset."""
+        """Append an empty line after the selected row at the current audio position."""
         was_playing = self._pause_for_edit()
         self._mw.lrc_state.append_line(index, time=self._get_sync_time())
         target = self._mw.lrc_state.select_index
@@ -1393,49 +1222,49 @@ class SynchronizerPage(QWidget):
         self._mw.toast_overlay.show_toast("success", f"已在第 {index + 1} 行后追加新行")
         self._resume_after_edit(was_playing)
 
-    # ── Lyric Input Box ────────────────────────────────────
-
     def _on_lyric_input_submit(self) -> None:
         """Handle Enter in the lyric input box."""
         self._insert_lyric_lines(self._lyric_input.toPlainText())
         self._lyric_input.clear()
-        # Typing session (paused on input-box focus) is over — resume playback.
         self._resume_after_edit(bool(self._input_was_playing))
         self._input_was_playing = None
 
+    def _ensure_draft_for_song(self) -> None:
+        """Point the draft at the loaded song's same-name .lrc when none is set."""
+        mp3_path = self._mw.audio_manager.local_path
+        if not mp3_path:
+            return
+        lrc_path = _mp3_to_lrc_path(mp3_path)
+        if os.path.exists(lrc_path) or self._mw.config.get_last_lrc_path():
+            return
+        self._mw.config.set_last_lrc_path(lrc_path)
+        self._mw.toast_overlay.show_toast("success", f"已自动新建草稿：{os.path.basename(lrc_path)}")
+
     def _insert_lyric_lines(self, raw: str) -> int:
-        """Insert lyric text into the state, one line per lyric.
-
-        Splits input by newlines, filters empty lines, then either:
-        - Inserts at top (timestamp 0.0) when no row has been clicked
-        - Appends after the clicked row (same timestamp)
-
-        Returns the number of lines inserted (0 when there was nothing).
-        """
+        """Insert lyric text into the state, one line per lyric."""
         lines = [ln.strip() for ln in raw.split("\n")]
-        lines = [ln for ln in lines if ln]
+        while lines and not lines[0]:
+            lines.pop(0)
+        while lines and not lines[-1]:
+            lines.pop()
 
         if not lines:
             return 0
 
+        self._ensure_draft_for_song()
+
         state = self._mw.lrc_state
 
-        # Determine insert position and timestamp
         if self._append_target_index is not None and 0 <= self._append_target_index < len(state.lyric):
-            # Append after the selected row, with that row's timestamp
             after_index = self._append_target_index
             ref_time = state.lyric[self._append_target_index].time
         else:
-            # Insert at top, timestamp 0
             after_index = -1
             ref_time = 0.0
 
         state.insert_lines(after_index, lines, ref_time)
         self._append_target_index = None
 
-        # Defer scroll so the layout processes the new rows first —
-        # otherwise ensureWidgetVisible uses stale positions and the
-        # scrollbar snaps to the top instead of the inserted lines.
         target_idx = state.select_index
         QTimer.singleShot(0, lambda: self._scroll_to_row(target_idx))
 
@@ -1462,16 +1291,11 @@ class SynchronizerPage(QWidget):
             self._lyric_input.clear()
 
     def _update_input_visibility(self) -> None:
-        """Show or hide the lyric input box.
-
-        Always visible on the synchronizer page except when translation
-        mode is active.  Even an empty draft needs an input so the user
-        can start typing lyrics.
-        """
-        self._input_container.setVisible(not self._translation_mode)
+        """Show or hide the lyric input box."""
+        self._lyric_input.setVisible(not self._translation_mode)
 
     def _restyle_input(self) -> None:
-        """Apply theme styling to the lyric input box."""
+        """Apply theme styling to the lyric input box + its expand icon."""
         prefs = self._mw.config.get_preferences()
         theme_color = prefs.get("themeColor", "#f58ea8")
         is_dark = is_dark_theme()
@@ -1493,15 +1317,37 @@ class SynchronizerPage(QWidget):
             f"}}"
         )
 
-    # ── Internal: Scrolling ─────────────────────────────────
+        if hasattr(self, "_btn_expand"):
+            self._btn_expand.setStyleSheet(
+                f"QPushButton {{"
+                f"  border: none; background: transparent;"
+                f"  color: {_rgba(fg, 0.5)}; border-radius: 6px;"
+                f"}}"
+                f"QPushButton:hover {{"
+                f"  background-color: {_rgba(theme_color, 0.15)};"
+                f"  color: {theme_color};"
+                f"}}"
+                f"QPushButton:pressed {{"
+                f"  background-color: {_rgba(theme_color, 0.25)};"
+                f"  color: {theme_color};"
+                f"}}"
+            )
+        self._reposition_expand_button()
+
+    def _reposition_expand_button(self) -> None:
+        """Keep the expand icon pinned to the input box's bottom-right corner."""
+        btn = getattr(self, "_btn_expand", None)
+        if btn is None:
+            return
+        w = self._lyric_input.width()
+        h = self._lyric_input.height()
+        btn.move(max(0, w - btn.width() - 6), max(0, h - btn.height() - 4))
 
     def _scroll_to_row(self, index: int) -> None:
         """Scroll so the given row is visible."""
         if 0 <= index < len(self._rows):
             row = self._rows[index]
             self._scroll.ensureWidgetVisible(row, 0, 40)
-
-    # ── Space Button ────────────────────────────────────────
 
     def _reposition_space_button(self) -> None:
         """Reposition the space button to bottom-right of this widget."""
@@ -1515,10 +1361,8 @@ class SynchronizerPage(QWidget):
         self._reposition_space_button()
 
     def showEvent(self, event) -> None:
-        """Called when this page becomes visible."""
         super().showEvent(event)
         self._refresh_rows()
         self.setFocus()
-        # Apply space button preference
         prefs = self._mw.config.get_preferences()
         self.set_space_button_visible(prefs.get("screenButton", False))

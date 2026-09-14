@@ -31,20 +31,10 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-# ── Background scanner QThread ────────────────────────────────
-
-
 class _ScanWorker(QThread):
-    """Scans directories recursively for .mp3 files in a background thread.
+    """Scan directories recursively for .mp3 files in a background thread."""
 
-    Supports two modes:
-      - full scan (existing_songs is None): mutagen-parses every file.
-      - incremental scan (existing_songs given): reuses cached entries whose
-        mtime/size fingerprint is unchanged, only re-parsing files that were
-        added or modified on disk. Deleted files are dropped from the result.
-    """
-
-    scan_finished = pyqtSignal(list, int, int, int)  # (songs, added, updated, removed)
+    scan_finished = pyqtSignal(list, int, int, int)
 
     def __init__(
         self,
@@ -59,7 +49,6 @@ class _ScanWorker(QThread):
     def run(self) -> None:
         import mutagen
 
-        # Index existing songs by normalized path for incremental matching.
         existing: dict[str, dict] = {}
         if self._existing_songs:
             existing = {
@@ -90,25 +79,22 @@ class _ScanWorker(QThread):
 
                     cached = existing.get(key)
 
-                    # ── Fast path: fingerprint unchanged → reuse entry ──
                     if cached is not None and (
                         cached.get("mtime_ns") == st.st_mtime_ns
                         and cached.get("size") == st.st_size
                     ):
-                        song = dict(cached)  # keep stored "path" string stable
+                        song = dict(cached)
                         stem = os.path.splitext(full_path)[0]
                         song["has_lrc"] = os.path.isfile(stem + ".lrc")
                         songs.append(song)
                         seen.add(key)
                         continue
 
-                    # ── Slow path: new or modified file → full parse ──
                     try:
                         audio = mutagen.File(full_path)
                     except Exception:
                         continue
 
-                    # ── Extract tags ──
                     title = ""
                     artist = ""
                     album = ""
@@ -191,7 +177,6 @@ class _ScanWorker(QThread):
                     else:
                         added += 1
 
-        # Songs that existed before but are no longer on disk
         removed = sum(1 for k in existing if k not in seen)
 
         songs.sort(key=lambda s: (
@@ -240,10 +225,7 @@ def _id3_comment_text(tags) -> str:
 
 
 def _migrate_root_dir(cache: dict) -> str:
-    """Read root_dir from cache, falling back to old root_dirs format.
-
-    v1 cache used ``root_dirs`` (list); v2 uses ``root_dir`` (str).
-    """
+    """Return the cached root directory, or the first entry of ``root_dirs``."""
     root_dir = cache.get("root_dir", "")
     if root_dir:
         return root_dir
@@ -251,9 +233,6 @@ def _migrate_root_dir(cache: dict) -> str:
     if old_dirs:
         return old_dirs[0]
     return ""
-
-
-# ── Tree data node ────────────────────────────────────────────
 
 
 class _TreeNode:
@@ -278,9 +257,6 @@ class _TreeNode:
         for c in self.children:
             n += c.total_song_count()
         return n
-
-
-# ── Song row widget ───────────────────────────────────────────
 
 
 class _SongRow(QWidget):
@@ -310,19 +286,16 @@ class _SongRow(QWidget):
         layout.setContentsMargins(24 + indent * 20, 5, 16, 5)
         layout.setSpacing(8)
 
-        # ── Title — Artist ──
         self._title_label = QLabel()
         self._title_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         layout.addWidget(self._title_label)
 
-        # ── Has LRC indicator ──
         self._lrc_label = QLabel()
         self._lrc_label.setToolTip("存在同名歌词文件")
         layout.addWidget(self._lrc_label)
 
-        # ── Duration ──
         self._dur_label = QLabel()
         self._dur_label.setStyleSheet("font-size: 13px; color: gray;")
         self._dur_label.setFixedWidth(48)
@@ -333,7 +306,6 @@ class _SongRow(QWidget):
 
         self._refresh_labels()
 
-        # ── Like button ──
         self._like_btn = QPushButton()
         self._like_btn.setFixedSize(30, 30)
         self._like_btn.setFlat(True)
@@ -426,11 +398,7 @@ class _SongRow(QWidget):
         self._refresh_like_btn()
 
     def matches(self, text: str, liked_only: bool = False) -> bool:
-        """Check if this song matches a search filter (case-insensitive).
-
-        Searches all metadata fields: path, title, artist, album,
-        albumartist, lyricist, composer, year, genre, comment.
-        """
+        """Return True if this song matches the search text and liked-only filter."""
         if liked_only and not self._liked:
             return False
         if not text:
@@ -451,13 +419,8 @@ class _SongRow(QWidget):
         return any(lower in h.lower() for h in haystack if h)
 
 
-# ── Tree branch widget (collapsible directory node) ──────────
-
-
 class _TreeBranch(QWidget):
-    """A collapsible directory node — recursive: can contain
-    child _TreeBranch widgets and _SongRow widgets.
-    """
+    """A collapsible directory node holding child branches and song rows."""
 
     import_requested = pyqtSignal(str)
 
@@ -470,7 +433,7 @@ class _TreeBranch(QWidget):
         super().__init__(parent)
         self._node = node
         self._depth = depth
-        self._expanded = False  # start collapsed
+        self._expanded = False
         self._branches: list[_TreeBranch] = []
         self._song_rows: list[_SongRow] = []
 
@@ -478,7 +441,6 @@ class _TreeBranch(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Header button ──
         total = node.total_song_count()
         indent_px = depth * 20
         arrow = "▶"
@@ -494,20 +456,17 @@ class _TreeBranch(QWidget):
         self._header_btn.customContextMenuRequested.connect(self._on_context_menu)
         outer.addWidget(self._header_btn)
 
-        # ── Content area ──
         self._content = QWidget()
-        self._content.setVisible(False)  # start collapsed
+        self._content.setVisible(False)
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 4)
         self._content_layout.setSpacing(0)
 
-        # Child branches (subdirectories)
         for child_node in sorted(node.children, key=lambda n: n.name.lower()):
             branch = _TreeBranch(child_node, depth + 1)
             self._branches.append(branch)
             self._content_layout.addWidget(branch)
 
-        # Song rows at this level
         for song in node.songs:
             row = _SongRow(song, indent=depth + 1)
             self._song_rows.append(row)
@@ -572,10 +531,7 @@ class _TreeBranch(QWidget):
 
     def apply_filter(self, text: str, liked_only: bool = False,
                       expand_matches: bool = False) -> bool:
-        """Show/hide based on search and liked-only filter.
-        When *expand_matches* is True, auto-expand branches that contain
-        visible rows so the user can see matching songs immediately.
-        Returns True if anything is visible."""
+        """Show/hide this subtree by filter, expanding matches; True if visible."""
         any_visible = False
         for row in self._song_rows:
             v = row.matches(text, liked_only)
@@ -591,9 +547,6 @@ class _TreeBranch(QWidget):
         return any_visible
 
 
-# ── Main playlist page ────────────────────────────────────────
-
-
 class PlaylistPage(QScrollArea):
     """Media library page — scan folders, tree-browse songs, click to load audio."""
 
@@ -604,7 +557,6 @@ class PlaylistPage(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        # ── State ──
         self._all_songs: list[dict] = []
         self._branches: list[_TreeBranch] = []
         self._filter_text: str = ""
@@ -614,14 +566,12 @@ class PlaylistPage(QScrollArea):
         self._root_dir: str = ""
         self._scan_incremental: bool = False
 
-        # ── Container ──
         container = QWidget()
         self.setWidget(container)
         self._layout = QVBoxLayout(container)
         self._layout.setContentsMargins(24, 16, 24, 16)
         self._layout.setSpacing(12)
 
-        # ── Toolbar ──
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
 
@@ -633,7 +583,6 @@ class PlaylistPage(QScrollArea):
         self._btn_rescan.clicked.connect(self._on_rescan)
         toolbar.addWidget(self._btn_rescan)
 
-        # ── Liked-only filter toggle ──
         self._btn_liked = QPushButton("♡ 喜欢")
         self._btn_liked.setCheckable(True)
         self._btn_liked.setToolTip("仅显示喜欢的歌曲")
@@ -651,12 +600,10 @@ class PlaylistPage(QScrollArea):
 
         self._layout.addLayout(toolbar)
 
-        # ── Content area (dynamic) ──
         self._content_layout = QVBoxLayout()
         self._content_layout.setSpacing(2)
         self._layout.addLayout(self._content_layout)
 
-        # ── Empty state ──
         self._empty_label = QLabel("请选择一个音乐文件夹开始扫描")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(
@@ -666,10 +613,7 @@ class PlaylistPage(QScrollArea):
 
         self._layout.addStretch()
 
-        # ── Load cache on startup ──
         self._load_cache()
-
-    # ── Cache ────────────────────────────────────────────────
 
     def _load_cache(self) -> None:
         cache = self._mw.config.get_playlist_cache()
@@ -680,8 +624,6 @@ class PlaylistPage(QScrollArea):
             self._rebuild_ui()
         else:
             self._all_songs = []
-
-    # ── Scanning ─────────────────────────────────────────────
 
     def _on_select_folder(self) -> None:
         default_dir = self._mw.config.get_default_browse_dir()
@@ -710,8 +652,6 @@ class PlaylistPage(QScrollArea):
         self._btn_rescan.setEnabled(False)
 
         self._scan_incremental = incremental
-        # Shallow-copy snapshot so a like toggle / refresh_song on the main
-        # thread mid-scan can't race with the worker reading the same dicts.
         existing = [dict(s) for s in self._all_songs] if incremental else []
         self._worker = _ScanWorker(
             root_dirs, existing_songs=existing, parent=self
@@ -722,7 +662,6 @@ class PlaylistPage(QScrollArea):
     def _on_scan_finished(
         self, songs: list[dict], added: int, updated: int, removed: int
     ) -> None:
-        # ── Merge liked state from existing cache ──
         old_cache = self._mw.config.get_playlist_cache()
         old_liked: set[str] = set()
         for s in old_cache.get("songs", []):
@@ -733,7 +672,6 @@ class PlaylistPage(QScrollArea):
             if s["path"] in old_liked:
                 s["liked"] = True
 
-        # ── Save cache ──
         cache = {
             "root_dir": self._root_dir,
             "scanned_at": datetime.now().isoformat(timespec="seconds"),
@@ -754,8 +692,6 @@ class PlaylistPage(QScrollArea):
         else:
             print(f"扫描完成，共 {len(songs)} 首")
 
-    # ── Tree builder ──────────────────────────────────────────
-
     def _build_tree(self) -> _TreeNode:
         """Build a directory tree from the flat song list."""
         root = _TreeNode(
@@ -767,11 +703,10 @@ class PlaylistPage(QScrollArea):
             try:
                 rel = os.path.relpath(song["path"], self._root_dir)
             except ValueError:
-                # Different drive — put under root directly
                 root.songs.append(song)
                 continue
             parts = rel.replace("\\", "/").split("/")
-            dir_parts = parts[:-1]  # directory components
+            dir_parts = parts[:-1]
 
             node = root
             for part in dir_parts:
@@ -787,8 +722,6 @@ class PlaylistPage(QScrollArea):
 
         return root
 
-    # ── UI rebuild ────────────────────────────────────────────
-
     def _rebuild_ui(self) -> None:
         self._empty_label.setVisible(False)
         for branch in self._branches:
@@ -800,17 +733,14 @@ class PlaylistPage(QScrollArea):
             self._empty_label.setVisible(True)
             return
 
-        # Invalidate saved expansion snapshot (tree was rebuilt)
         self._saved_expanded = None
 
         tree = self._build_tree()
 
-        # ── Create root branch ──
         root_branch = _TreeBranch(tree, depth=0)
         self._branches.append(root_branch)
         self._content_layout.addWidget(root_branch)
 
-        # ── Connect signals (recursively) ──
         for row in root_branch.collect_rows():
             row.song_clicked.connect(self._on_song_clicked)
             row.like_toggled.connect(self._on_like_toggled)
@@ -821,14 +751,11 @@ class PlaylistPage(QScrollArea):
         if self._filter_text or self._show_liked_only:
             self._do_apply_filter()
 
-    # ── Song click → load audio + auto-play ──────────────────
-
     def _on_song_clicked(self, path: str) -> None:
         if not os.path.isfile(path):
             print("文件不存在")
             return
 
-        # ── Same song → restart from beginning ──
         current_path = self._mw.audio_manager.local_path
         if current_path and os.path.normpath(current_path) == os.path.normpath(path):
             self._mw.audio_manager.current_time = 0
@@ -838,8 +765,6 @@ class PlaylistPage(QScrollArea):
             print(f"重新播放：{name}")
             return
 
-        # ── Different song → load through the play queue so the playback
-        #    mode (随机/循环/顺序…) and 上一首/下一首 apply to it. ──
         pm = self._mw.playlist
         norm = os.path.normpath
         idx = next(
@@ -848,7 +773,6 @@ class PlaylistPage(QScrollArea):
             None,
         )
         if idx is None:
-            # Not queued yet — append so mode-based advancement has a list.
             song = next(
                 (s for s in self._all_songs if norm(s.get("path", "")) == norm(path)),
                 None,
@@ -866,8 +790,6 @@ class PlaylistPage(QScrollArea):
 
         name = os.path.basename(path)
         print(f"已加载：{name}")
-
-    # ── Import into the play queue ─────────────────────────────
 
     def get_all_songs(self) -> list[dict]:
         """Return all scanned songs (shallow copy) in natural order."""
@@ -902,28 +824,20 @@ class PlaylistPage(QScrollArea):
         self._mw.import_to_playlist(songs)
         print(f"已导入 {len(songs)} 首到播放列表")
 
-    # ── Like toggle ───────────────────────────────────────────
-
     def _on_like_toggled(self, path: str, liked: bool) -> None:
         for s in self._all_songs:
             if s["path"] == path:
                 s["liked"] = liked
                 break
         self._mw.config.toggle_playlist_like(path)
-        # Refresh liked-only filter (hide song immediately if unliked)
         if self._show_liked_only:
             liked_count = sum(1 for s in self._all_songs if s.get("liked"))
             self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
             self._do_apply_filter()
-        # Broadcast so the footer / expanded-editor like button stays in sync.
         self._mw.liked_changed.emit(path, liked)
 
     def sync_liked(self, path: str, liked: bool) -> None:
-        """Sync a song's liked state from the footer / expanded-editor.
-
-        The footer already persisted the flag via ``toggle_playlist_like``;
-        here we only reflect it into the in-memory library + visible rows.
-        """
+        """Reflect a liked-state change from the footer into the library and rows."""
         norm = os.path.normpath
         for s in self._all_songs:
             if norm(s.get("path", "")) == norm(path):
@@ -938,26 +852,18 @@ class PlaylistPage(QScrollArea):
             self._btn_liked.setText(f"❤ 喜欢 ({liked_count})")
             self._do_apply_filter()
 
-    # ── Song refresh (called by MetaEditorPage after saving) ──
-
     def refresh_song(self, old_path: str, new_path: str = "") -> None:
-        """Re-read a single file's metadata and update the playlist entry.
-
-        Called after metadata edits or file rename.  If *new_path* is
-        given (rename), the cache key is updated too.
-        """
+        """Re-read a single file's metadata and update the playlist entry."""
         actual = new_path or old_path
         if not os.path.isfile(actual):
             return
 
-        # ── Re-read metadata from file ──
         try:
             import mutagen
             audio = mutagen.File(actual)
         except Exception:
             return
 
-        # ── Extract all tags (mirrors _ScanWorker) ──
         title = ""
         artist = ""
         album = ""
@@ -1013,7 +919,6 @@ class PlaylistPage(QScrollArea):
         stem = os.path.splitext(actual)[0]
         has_lrc = os.path.isfile(stem + ".lrc")
 
-        # Fresh fingerprint so the next incremental rescan reuses this entry
         try:
             st = os.stat(actual)
             mtime_ns = st.st_mtime_ns
@@ -1022,7 +927,6 @@ class PlaylistPage(QScrollArea):
             mtime_ns = 0
             size = 0
 
-        # ── Update in-memory list ──
         updated_song = None
         for song in self._all_songs:
             if os.path.normpath(song["path"]) == os.path.normpath(old_path):
@@ -1043,7 +947,6 @@ class PlaylistPage(QScrollArea):
                 updated_song = song
                 break
 
-        # ── Persist to cache JSON ──
         cache = self._mw.config.get_playlist_cache()
         for s in cache.get("songs", []):
             if os.path.normpath(s["path"]) == os.path.normpath(old_path):
@@ -1064,15 +967,12 @@ class PlaylistPage(QScrollArea):
                 break
         self._mw.config.set_playlist_cache(cache)
 
-        # ── In-place update the widget (no full rebuild) ──
         if updated_song is not None:
             for branch in self._branches:
                 for row in branch.collect_rows():
                     if os.path.normpath(row._song["path"]) == os.path.normpath(old_path):
                         row.update_song(updated_song)
                         return
-
-    # ── Search ────────────────────────────────────────────────
 
     def _on_search_text_changed(self, text: str) -> None:
         if self._search_timer is not None:
@@ -1096,13 +996,10 @@ class PlaylistPage(QScrollArea):
         self._do_apply_filter()
 
     def _do_apply_filter(self) -> None:
-        """Apply both text search and liked-only filter to all branches.
-        Snapshot expansion state before the first filter, restore when
-        the filter is cleared, and auto-expand matching paths in between."""
+        """Apply the text search and liked-only filter to every branch."""
         active = bool(self._filter_text) or self._show_liked_only
 
         if active and self._saved_expanded is None:
-            # Snapshot user's manual expansion state before filtering
             self._saved_expanded = {}
             for branch in self._branches:
                 self._saved_expanded.update(branch.snapshot_expanded())
@@ -1112,12 +1009,9 @@ class PlaylistPage(QScrollArea):
                                 expand_matches=active)
 
         if not active and self._saved_expanded is not None:
-            # Filter cleared — restore original expansion state
             for branch in self._branches:
                 branch.restore_expanded(self._saved_expanded)
             self._saved_expanded = None
-
-    # ── showEvent ─────────────────────────────────────────────
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

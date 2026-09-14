@@ -14,10 +14,7 @@ from ..core.constants import PageRoute
 
 
 class HeaderBar(QWidget):
-    """Top navigation bar with app title, tab buttons, and help.
-
-    Tabs: Home | Synchronizer | MetaEditor | Preferences | Help(?)
-    """
+    """Top navigation bar with app title, tab buttons, and help button."""
 
     page_requested = pyqtSignal(int)
     help_requested = pyqtSignal()
@@ -25,8 +22,6 @@ class HeaderBar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("headerBar")
-        # Plain QWidget subclasses don't paint stylesheet backgrounds
-        # without this flag (the #headerBar surface colour would be lost).
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(48)
 
@@ -34,14 +29,12 @@ class HeaderBar(QWidget):
         layout.setContentsMargins(12, 0, 12, 0)
         layout.setSpacing(4)
 
-        # App title
         self.title_label = QLabel("集成歌曲编辑器")
         self.title_label.setObjectName("appTitle")
         layout.addWidget(self.title_label)
 
         layout.addStretch()
 
-        # Nav tabs
         self._buttons: dict[int, QPushButton] = {}
 
         tabs = [
@@ -61,7 +54,6 @@ class HeaderBar(QWidget):
             layout.addWidget(btn)
             self._buttons[route] = btn
 
-        # Help button — same visual style as navTabs but not a router
         self._help_btn = QPushButton("?")
         self._help_btn.setObjectName("navTab")
         self._help_btn.setFlat(True)
@@ -69,12 +61,10 @@ class HeaderBar(QWidget):
         self._help_btn.clicked.connect(self.help_requested.emit)
         layout.addWidget(self._help_btn)
 
-        # Default selection
         self._buttons[PageRoute.HOME].setChecked(True)
         self._active_route = PageRoute.HOME
 
     def _on_tab_clicked(self, route: int) -> None:
-        # Uncheck all other buttons
         for r, btn in self._buttons.items():
             btn.setChecked(r == route)
         self._active_route = route

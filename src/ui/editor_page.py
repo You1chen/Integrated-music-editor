@@ -1,4 +1,4 @@
-"""Editor page — LRC text editor with metadata fields and toolbar (replaces editor.tsx)."""
+"""Editor page — LRC text editor with metadata fields and toolbar."""
 
 from __future__ import annotations
 
@@ -38,7 +38,6 @@ class EditorPage(QWidget):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        # ── Meta Info Group ─────────────────────────────
         meta_group = QGroupBox("元信息")
         meta_group.setCheckable(True)
         meta_group.setChecked(True)
@@ -69,7 +68,6 @@ class EditorPage(QWidget):
 
         layout.addWidget(meta_group)
 
-        # ── Toolbar ────────────────────────────────────
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
 
@@ -88,20 +86,16 @@ class EditorPage(QWidget):
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        # ── Text Editor ────────────────────────────────
         self.text_edit = QPlainTextEdit()
         self.text_edit.setObjectName("editorArea")
         self.text_edit.setFont(QFont("Consolas", 13))
         self.text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        # Install event filter to detect focus loss and re-parse
         self.text_edit.installEventFilter(self)
         layout.addWidget(self.text_edit, stretch=1)
 
-        # Connect state changes -> update text edit
         self._mw.lrc_state.state_changed.connect(self._update_from_state)
         self._suppress_update = False
 
-        # Initial load
         self._update_from_state()
 
     def _update_from_state(self) -> None:
@@ -113,7 +107,6 @@ class EditorPage(QWidget):
         if text != current:
             self.text_edit.setPlainText(text)
 
-        # Update metadata fields
         self.ti_input.setText(self._mw.lrc_state.info.get("ti", ""))
         self.ar_input.setText(self._mw.lrc_state.info.get("ar", ""))
         self.al_input.setText(self._mw.lrc_state.info.get("al", ""))
@@ -129,7 +122,6 @@ class EditorPage(QWidget):
         self._mw.lrc_state.set_info(name, value)
 
     def _on_upload_text(self) -> None:
-        # Determine initial directory: last path > default browse dir > home
         default_dir = self._mw.config.get_default_browse_dir()
         last_path = self._mw.config.get_last_lrc_path()
         if last_path and os.path.exists(os.path.dirname(last_path)):
@@ -146,7 +138,6 @@ class EditorPage(QWidget):
             "歌词文件 (*.lrc *.txt);;所有文件 (*)",
         )
         if file_path:
-            # Save last path if preference is enabled
             self._mw.config.remember_lrc_path(file_path)
 
             try:
@@ -165,7 +156,6 @@ class EditorPage(QWidget):
         self.text_edit.setTextCursor(cursor)
 
     def _on_download(self) -> None:
-        # Build filename from metadata
         info = self._mw.lrc_state.info
         parts = []
         for key in ("ti", "ar"):
@@ -175,7 +165,6 @@ class EditorPage(QWidget):
         if not parts:
             parts.append(info.get("al", "lyrics"))
         filename = " - ".join(parts) + ".lrc"
-        # Sanitize
         import re
         filename = re.sub(r'[<>:"/\\|?*]', "_", filename).strip()
 
@@ -194,14 +183,7 @@ class EditorPage(QWidget):
                 QMessageBox.warning(self, "错误", f"保存文件失败：{e}")
 
     def showEvent(self, event) -> None:
-        """Called when this page becomes visible."""
         super().showEvent(event)
-        # Sync editor from current state first (state may have changed
-        # while user was on other pages). Do NOT parse editor text into
-        # state here — the editor may contain stale content, and parsing
-        # it would overwrite valid state (e.g., timestamps added in the
-        # synchronizer page). Editor→state sync only happens on explicit
-        # user actions: FocusOut (eventFilter) or file load (_on_upload_text).
         self._update_from_state()
 
     def eventFilter(self, obj, event):

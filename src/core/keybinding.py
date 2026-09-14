@@ -1,7 +1,4 @@
-"""Keyboard binding system — replaces keybindings.ts + default-keybindings.ts.
-
-Supports configurable key-to-action mappings with Qt.Key codes.
-"""
+"""Keyboard binding system with configurable key-to-action mappings."""
 
 from __future__ import annotations
 
@@ -16,11 +13,7 @@ from .constants import InputAction
 
 @dataclass
 class KeyBinding:
-    """A single keyboard shortcut definition.
-
-    Uses either a physical key code (Qt.Key) or a character key (str).
-    Matches the KeyBinding interface from the web app.
-    """
+    """A single keyboard shortcut definition."""
     code: Optional[Qt.Key] = None
     key: Optional[str] = None
     ctrl_key: bool = False
@@ -48,10 +41,7 @@ class KeyBinding:
         )
 
 
-# ── Action Labels (Chinese) ──────────────────────────────────
-
 ACTION_LABELS: Dict[InputAction, str] = {
-    # Synchronizer actions
     InputAction.SYNC: "打时间戳",
     InputAction.DELETE_TIME: "删除时间戳",
     InputAction.RESET_OFFSET: "重置偏移",
@@ -63,7 +53,6 @@ ACTION_LABELS: Dict[InputAction, str] = {
     InputAction.LAST_LINE: "末行",
     InputAction.PAGE_UP: "上翻页",
     InputAction.PAGE_DOWN: "下翻页",
-    # Audio control actions
     InputAction.SEEK_BACKWARD: "后退 5 秒",
     InputAction.SEEK_FORWARD: "前进 5 秒",
     InputAction.RESET_RATE: "重置播放速率",
@@ -72,23 +61,19 @@ ACTION_LABELS: Dict[InputAction, str] = {
     InputAction.TOGGLE_PLAY: "切换播放/暂停",
     InputAction.PREV_SONG: "上一首",
     InputAction.NEXT_SONG: "下一首",
-    # Lyric editing actions
     InputAction.COPY_LINE: "复制歌词行",
     InputAction.SPLIT_LYRIC: "拆分歌词行",
     InputAction.DELETE_LINES: "删除选中行",
     InputAction.MERGE_LINES: "合并选中行",
     InputAction.SELECT_ALL: "全选",
-    # Toolbar actions
     InputAction.SAVE: "保存",
     InputAction.EXPORT: "导出/另存",
     InputAction.TRANSLATE: "翻译模式",
-    # Global actions
     InputAction.SHOW_HELP: "显示帮助",
     InputAction.UNDO: "撤销",
     InputAction.REDO: "重做",
 }
 
-# Ordered groups for display
 ACTION_GROUPS: List[Tuple[str, List[InputAction]]] = [
     ("打轴", [
         InputAction.SYNC, InputAction.DELETE_TIME,
@@ -120,18 +105,15 @@ ACTION_GROUPS: List[Tuple[str, List[InputAction]]] = [
 ]
 
 
-# ── Key name helpers ─────────────────────────────────────────
-
 def _key_name(code: Qt.Key) -> str:
     """Convert a Qt.Key to a human-readable string."""
-    # Build a reverse map lazily
     _MAP: Dict[int, str] = {}
     if not _MAP:
         for name in dir(Qt.Key):
             if name.startswith("Key_"):
                 val = getattr(Qt.Key, name)
                 if isinstance(val, Qt.Key):
-                    _MAP[int(val)] = name[4:]  # strip "Key_"
+                    _MAP[int(val)] = name[4:]
     return _MAP.get(int(code), f"Key({int(code)})")
 
 
@@ -146,7 +128,6 @@ def keybinding_to_string(binding: KeyBinding) -> str:
         parts.append("Alt")
     if binding.code is not None:
         name = _key_name(binding.code)
-        # Shorten common names
         shorten: Dict[str, str] = {
             "Space": "Space", "Backspace": "Backspace", "Delete": "Delete",
             "Return": "Enter", "Escape": "Esc", "PageUp": "PageUp",
@@ -168,10 +149,7 @@ def action_to_string(action: InputAction) -> str:
     return " / ".join(keybinding_to_string(b) for b in bindings)
 
 
-# ── Default Key Bindings ────────────────────────────────────
-
 DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
-    # Synchronizer actions
     InputAction.SYNC: [
         KeyBinding(code=Qt.Key.Key_Space),
     ],
@@ -210,7 +188,6 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
         KeyBinding(code=Qt.Key.Key_PageDown),
     ],
 
-    # Audio control actions
     InputAction.PREV_SONG: [
         KeyBinding(code=Qt.Key.Key_H),
     ],
@@ -240,7 +217,6 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
         KeyBinding(code=Qt.Key.Key_Return, ctrl_key=True),
     ],
 
-    # Lyric editing actions
     InputAction.COPY_LINE: [
         KeyBinding(code=Qt.Key.Key_C, ctrl_key=True),
     ],
@@ -257,7 +233,6 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
         KeyBinding(code=Qt.Key.Key_A, ctrl_key=True),
     ],
 
-    # Toolbar actions
     InputAction.SAVE: [
         KeyBinding(code=Qt.Key.Key_S, ctrl_key=True),
     ],
@@ -268,7 +243,6 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
         KeyBinding(code=Qt.Key.Key_T, ctrl_key=True),
     ],
 
-    # Global actions
     InputAction.SHOW_HELP: [
         KeyBinding(key="?"),
     ],
@@ -282,10 +256,7 @@ DEFAULT_BINDINGS: Dict[InputAction, List[KeyBinding]] = {
 
 
 class KeyBindingManager:
-    """Manages keyboard shortcut detection and matching.
-
-    Supports user-customizable bindings on top of defaults.
-    """
+    """Manages keyboard shortcut detection and matching."""
 
     def __init__(
         self,
@@ -300,7 +271,7 @@ class KeyBindingManager:
                         KeyBinding.from_dict(d) for d in binding_dicts
                     ]
                 except ValueError:
-                    pass  # Unknown action, ignore
+                    pass
 
     @property
     def bindings(self) -> Dict[InputAction, List[KeyBinding]]:
@@ -318,10 +289,7 @@ class KeyBindingManager:
         }
 
     def get_matched_action(self, event: QKeyEvent) -> Optional[InputAction]:
-        """Find the InputAction matching a QKeyEvent.
-
-        Checks user overrides first, then defaults.
-        """
+        """Find the InputAction matching a QKeyEvent."""
         effective = self.bindings
         for action, bindings in effective.items():
             if self._match_key_binding(event, bindings):
@@ -341,16 +309,8 @@ class KeyBindingManager:
         self._user_overrides.clear()
 
     def _match_key_binding(self, event: QKeyEvent, bindings: List[KeyBinding]) -> bool:
-        """Check if a QKeyEvent matches any KeyBinding in a list.
-
-        Ports matchKeyBinding from keybindings.ts:
-        - Ctrl/Cmd: strict bidirectional check
-        - Shift/Alt: only require if binding specifies, allow extras otherwise
-        - Key match: checks Qt.Key code first, then character key string
-        """
+        """Check if a QKeyEvent matches any KeyBinding in a list."""
         for binding in bindings:
-            # Ctrl modifier: strict bidirectional (prevents conflicts with browser
-            # shortcuts, same rationale applies in desktop app)
             event_ctrl = (
                 event.modifiers() & Qt.KeyboardModifier.ControlModifier
             ) == Qt.KeyboardModifier.ControlModifier
@@ -364,9 +324,6 @@ class KeyBindingManager:
             if not binding.ctrl_key and ctrl_or_meta:
                 continue
 
-            # Shift: when binding uses Ctrl, check bidirectionally so that
-            # Ctrl+Shift+X doesn't accidentally match a Ctrl+X binding.
-            # When binding doesn't use Ctrl, keep permissive (allow extra Shift).
             event_shift = (
                 event.modifiers() & Qt.KeyboardModifier.ShiftModifier
             ) == Qt.KeyboardModifier.ShiftModifier
@@ -376,7 +333,6 @@ class KeyBindingManager:
             elif binding.shift_key and not event_shift:
                 continue
 
-            # Alt: require exact match if binding specifies
             if binding.alt_key:
                 event_alt = (
                     event.modifiers() & Qt.KeyboardModifier.AltModifier
@@ -384,7 +340,6 @@ class KeyBindingManager:
                 if not event_alt:
                     continue
 
-            # Check key: code (Qt.Key) first, then character key
             if binding.code is not None and event.key() == binding.code:
                 return True
             if binding.key is not None and event.text() == binding.key:

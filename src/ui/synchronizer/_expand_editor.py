@@ -1,15 +1,4 @@
-"""Expanded lyric editor — a large window for comfortable lyric entry.
-
-Opened from the synchronizer page's input box ("展开" button).  It hosts:
-
-- A large plain-text editor that fills the window.
-- The same ``AudioControls`` play bar as the main window (a second,
-  independently-wired instance sharing the app's audio/playlist state).
-- A Ctrl+F regex find/replace bar.
-
-The edited text is committed back through ``lyrics_submitted(str)`` —
-the synchronizer page reuses its normal input-box insert logic.
-"""
+"""Expanded lyric editor — a large window for comfortable lyric entry."""
 
 from __future__ import annotations
 
@@ -54,12 +43,7 @@ class _ExpandTextEdit(QPlainTextEdit):
 
 
 class _FindReplaceBar(QWidget):
-    """Inline regex find/replace bar for a ``QPlainTextEdit``.
-
-    Find uses ``QPlainTextEdit.find(QRegularExpression)`` so cursor positions
-    stay in document coordinates; replacement expands ``\\1``-style
-    backreferences best-effort via Python ``re`` when regex mode is on.
-    """
+    """Inline regex find/replace bar for a ``QPlainTextEdit``."""
 
     def __init__(self, editor: QPlainTextEdit, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -108,14 +92,10 @@ class _FindReplaceBar(QWidget):
         btn_close.clicked.connect(self.close_bar)
         layout.addWidget(btn_close)
 
-    # ── Regex helpers ────────────────────────────────────────
-
     def _make_re(self) -> QRegularExpression | None:
         text = self._find_edit.text()
         if not text:
             return None
-        # Case sensitivity is controlled via the FindCaseSensitively flag
-        # passed to find() — the flag overrides the regex's own option.
         pattern = text if self._regex_check.isChecked() else QRegularExpression.escape(text)
         re_obj = QRegularExpression(pattern)
         return re_obj if re_obj.isValid() else None
@@ -138,8 +118,6 @@ class _FindReplaceBar(QWidget):
         except re.error:
             pass
         return replacement
-
-    # ── Actions ──────────────────────────────────────────────
 
     def find_next(self, checked: bool = False) -> bool:
         re_obj = self._make_re()
@@ -185,7 +163,6 @@ class _FindReplaceBar(QWidget):
                     break
                 c = editor.textCursor()
                 if c.selectionStart() == c.selectionEnd():
-                    # Zero-length match — advance one char to avoid looping.
                     if not c.movePosition(QTextCursor.MoveOperation.NextCharacter):
                         break
                     editor.setTextCursor(c)
@@ -244,14 +221,12 @@ class ExpandEditorDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # ── Large text editor ──
         self._editor = _ExpandTextEdit()
         self._editor.setPlainText(initial_text)
         self._editor.setPlaceholderText("在此输入歌词，每行一句…")
         self._editor.setFont(QFont("Consolas", 13))
         self._editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
 
-        # ── Find/replace bar (hidden until Ctrl+F) ──
         self._find_bar = _FindReplaceBar(self._editor, self)
         self._find_bar.hide()
         self._editor.find_requested.connect(self._find_bar.open_bar)
@@ -259,17 +234,10 @@ class ExpandEditorDialog(QDialog):
         layout.addWidget(self._find_bar)
         layout.addWidget(self._editor, stretch=1)
 
-        # ── Play controls (identical to the main window's) ──
         self._audio_controls = self._build_audio_controls()
         layout.addWidget(self._audio_controls)
-        # This second AudioControls owns its own WaveformWidget, which starts
-        # a decoder QThread at construction.  The main window shuts down only
-        # the *footer* bar's waveform on close, so the dialog must stop its
-        # own on the way out — otherwise Qt warns "QThread: Destroyed while
-        # thread '' is still running" and the thread outlives the dialog.
         self.finished.connect(self._on_finished)
 
-        # ── Bottom action row ──
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         hint = QLabel("Ctrl+F 查找替换")
@@ -294,8 +262,6 @@ class ExpandEditorDialog(QDialog):
         mw.audio_manager.state_changed.connect(ac.update_state)
         mw.audio_manager.current_time_changed.connect(ac.on_current_time_changed)
         mw.playlist.mode_changed.connect(ac.update_mode_label)
-        # Bound method (not a lambda) so the connection is auto-broken when
-        # the dialog — and this second AudioControls — is destroyed.
         mw.lrc_state.state_changed.connect(ac.refresh_fixed)
 
         prefs = mw.config.get_preferences()
@@ -304,8 +270,6 @@ class ExpandEditorDialog(QDialog):
         ac.update_mode_label(mw.playlist.mode)
         ac.set_mode_lock(bool(getattr(mw, "_sync_active", False)))
 
-        # Reflect the player's current state immediately (the dialog may
-        # open while audio is already loaded / playing / at a custom rate).
         ac.update_state(AudioStateData(AudioState.PAUSE_CHANGED, mw.audio_manager.paused))
         ac.update_state(AudioStateData(AudioState.DURATION_LOADED, mw.audio_manager.duration))
         ac.update_state(AudioStateData(AudioState.RATE_CHANGED, mw.audio_manager.playback_rate))

@@ -1,4 +1,4 @@
-"""Aside panel — sync mode toggle and download button (replaces asidepanel.tsx)."""
+"""Aside panel — sync mode toggle and download button."""
 
 from __future__ import annotations
 
@@ -37,14 +37,12 @@ class AsidePanel(QWidget):
         layout.setContentsMargins(4, 8, 4, 8)
         layout.setSpacing(8)
 
-        # Sync mode toggle button (lock icon concept)
         self._mode_btn = QPushButton("🔒")
         self._mode_btn.setToolTip("切换打轴模式（选择 / 高亮）")
         self._mode_btn.setFixedSize(36, 36)
         self._mode_btn.clicked.connect(self._toggle_mode)
         layout.addWidget(self._mode_btn)
 
-        # Download button
         self._download_btn = QPushButton("⬇")
         self._download_btn.setToolTip("下载 LRC 文件")
         self._download_btn.setFixedSize(36, 36)

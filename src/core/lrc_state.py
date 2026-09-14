@@ -1,7 +1,4 @@
-"""Central LRC state manager — replaces React useReducer with QObject + signals.
-
-Ports the reducer logic from useLrc.ts directly.
-"""
+"""Central LRC state manager built on QObject and signals."""
 
 from __future__ import annotations
 
@@ -26,19 +23,12 @@ _MAX_UNDO = 100
 
 
 class LrcStateManager(QObject):
-    """Central state manager for LRC lyrics data.
-
-    Holds the full application state (info, lyric lines, selection, timing)
-    and emits state_changed whenever a dispatch method is called.
-
-    Direct port of the reducer in useLrc.ts.
-    """
+    """Central state manager for LRC lyrics data."""
 
     state_changed = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        # State fields
         self.info: Dict[str, str] = {}
         self.lyric: List[LyricLine] = []
         self.current_time: float = float("inf")
@@ -49,7 +39,6 @@ class LrcStateManager(QObject):
 
         self._format_options = FormatOptions()
 
-        # Undo/Redo stacks
         self._undo_stack: List[Dict[str, Any]] = []
         self._redo_stack: List[Dict[str, Any]] = []
 
@@ -98,7 +87,7 @@ class LrcStateManager(QObject):
         self._restore(self._redo_stack.pop())
 
     def init_from_text(self, text: str, options: TrimOptions, select: int = 0) -> None:
-        """Initialize state by parsing LRC text (replaces the `init` function)."""
+        """Initialize state by parsing LRC text."""
         self._push_undo()
         state = parse_lrc(text, options)
         self.info = state.info
@@ -111,7 +100,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def parse(self, text: str, options: TrimOptions) -> None:
-        """Action: PARSE — re-parse text into state."""
+        """Re-parse text into state."""
         self._push_undo()
         state = parse_lrc(text, options)
         self.info = state.info
@@ -120,7 +109,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def refresh(self, audio_time: float) -> None:
-        """Action: REFRESH — update current/next index based on audio position."""
+        """Update the current/next index from the audio position."""
         if self.current_time <= audio_time < self.next_time:
             return
 
@@ -148,11 +137,10 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def next_(self, audio_time: float) -> None:
-        """Action: NEXT — set time on current line, then move select to next line."""
+        """Set the time on the current line, then move the selection to the next line."""
         self._push_undo()
         index = self.select_index
 
-        # Set the time on current line (inline to avoid double-emit)
         if 0 <= index < len(self.lyric):
             if self.lyric[index].time != audio_time:
                 self.lyric[index] = LyricLine(
@@ -163,12 +151,11 @@ class LrcStateManager(QObject):
         self.current_time = audio_time
         self.next_time = float("-inf")
 
-        # Then advance selection
         self.select_index = guard(index + 1, 0, max(0, len(self.lyric) - 1))
         self.state_changed.emit()
 
     def set_time(self, time_val: float) -> None:
-        """Action: TIME — set the timestamp on the currently selected line."""
+        """Set the timestamp on the currently selected line."""
         self._push_undo()
         index = self.select_index
         if 0 <= index < len(self.lyric):
@@ -183,7 +170,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def set_text(self, index: int, text: str) -> None:
-        """Action: SET_TEXT — set the lyric text on a specific line."""
+        """Set the lyric text on a specific line."""
         self._push_undo()
         if 0 <= index < len(self.lyric):
             self.lyric[index] = LyricLine(
@@ -194,12 +181,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def split_line(self, index: int, positions: list[int]) -> None:
-        """Action: SPLIT — split a lyric line at given character positions.
-
-        Each position is a character index where the text should be cut.
-        Positions at the very start (0) or end (len(text)) are ignored.
-        All resulting lines share the same timestamp.
-        """
+        """Split a lyric line at the given character positions."""
         self._push_undo()
         if not (0 <= index < len(self.lyric)):
             return
@@ -207,12 +189,10 @@ class LrcStateManager(QObject):
         line = self.lyric[index]
         text = line.text
 
-        # Filter: positions must be strictly inside the text
         valid = sorted(set(p for p in positions if 0 < p < len(text)))
         if not valid:
             return
 
-        # Split text at positions
         segments: list[str] = []
         prev = 0
         for pos in valid:
@@ -220,7 +200,6 @@ class LrcStateManager(QObject):
             prev = pos
         segments.append(text[prev:])
 
-        # Drop empty segments (e.g. from adjacent markers)
         segments = [s for s in segments if s]
         if len(segments) <= 1:
             return
@@ -238,11 +217,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def append_line(self, after_index: int, time: Optional[float] = None) -> None:
-        """Action: APPEND — insert a new empty line after *after_index*.
-
-        Uses *time* as the new line's timestamp when given; otherwise
-        inherits the timestamp of the reference line.
-        """
+        """Insert a new empty line after *after_index*."""
         self._push_undo()
         if 0 <= after_index < len(self.lyric):
             ref = self.lyric[after_index]
@@ -253,11 +228,7 @@ class LrcStateManager(QObject):
             self.state_changed.emit()
 
     def copy_line(self, index: int) -> None:
-        """Duplicate the line at *index*, inserting a copy right below it.
-
-        The copied line keeps the same timestamp and text as the original.
-        If *index* is out of range, this is a no-op.
-        """
+        """Duplicate the line at *index*, inserting the copy right below it."""
         self._push_undo()
         if 0 <= index < len(self.lyric):
             ref = self.lyric[index]
@@ -273,19 +244,13 @@ class LrcStateManager(QObject):
     def insert_lines(
         self, after_index: int, texts: list[str], time: float | None = None
     ) -> None:
-        """Insert one or more lyric lines after *after_index*.
-
-        If *after_index* is -1, insert at the beginning (index 0).
-        All new lines share the same *time* timestamp.
-        Empty strings in *texts* are silently skipped.
-        """
+        """Insert one or more lyric lines after *after_index*."""
         self._push_undo()
-        filtered = [t for t in texts if t]
-        if not filtered:
+        if not texts:
             return
 
         new_lines = [
-            LyricLine(time=time, text=t, translation="") for t in filtered
+            LyricLine(time=time, text=t, translation="") for t in texts
         ]
 
         if after_index == -1:
@@ -298,7 +263,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def set_translation(self, index: int, text: str) -> None:
-        """Action: TRANSLATION -- set the translation text on a lyric line."""
+        """Set the translation text on a lyric line."""
         self._push_undo()
         if 0 <= index < len(self.lyric):
             self.lyric[index] = LyricLine(
@@ -309,10 +274,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def set_translations_batch(self, translations: dict[int, str]) -> int:
-        """Set translations for multiple lines in a single undo step.
-
-        Returns the number of lines actually updated.
-        """
+        """Set translations for multiple lines in a single undo step."""
         if not translations:
             return 0
         self._push_undo()
@@ -330,7 +292,7 @@ class LrcStateManager(QObject):
         return count
 
     def set_info(self, name: str, value: str) -> None:
-        """Action: INFO — set metadata info field."""
+        """Set a metadata info field."""
         self._push_undo()
         value = value.strip()
         if value == "":
@@ -340,7 +302,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def select(self, selector_fn: Callable[[int], int]) -> None:
-        """Action: SELECT — change the selected line index."""
+        """Change the selected line index via *selector_fn*."""
         new_index = guard(
             selector_fn(self.select_index),
             0,
@@ -357,7 +319,7 @@ class LrcStateManager(QObject):
             self.state_changed.emit()
 
     def delete_time(self) -> None:
-        """Action: DELETE_TIME — remove timestamp from selected line."""
+        """Remove the timestamp from the selected line."""
         self._push_undo()
         index = self.select_index
         if 0 <= index < len(self.lyric) and self.lyric[index].time is not None:
@@ -374,12 +336,7 @@ class LrcStateManager(QObject):
             self.state_changed.emit()
 
     def delete_lines(self, indices: set[int]) -> None:
-        """Completely remove one or more lines (text, timestamp, translation).
-
-        Lines are deleted from highest index to lowest so earlier indices
-        remain valid throughout.  *select_index* is re-clamped afterward;
-        if all lines are deleted it becomes -1.
-        """
+        """Remove one or more lines entirely (text, timestamp, translation)."""
         if not indices:
             return
         self._push_undo()
@@ -393,23 +350,13 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def merge_lines(self, indices: set[int]) -> None:
-        """Merge contiguous selected lines into one.
-
-        The merged line takes:
-        - timestamp: earliest non-None timestamp among the selected lines
-        - text: all selected lines' text joined by a single space
-          (blank lines are dropped, so adjacent lyrics never fuse together)
-        - translation: the first selected line's translation
-
-        *indices* must contain ≥2 consecutive indices; otherwise this is
-        a no-op (the caller should validate adjacency first).
-        """
+        """Merge contiguous selected lines into one."""
         if len(indices) < 2:
             return
         sorted_idx = sorted(indices)
         for i in range(1, len(sorted_idx)):
             if sorted_idx[i] != sorted_idx[i - 1] + 1:
-                return  # not contiguous — caller should warn before calling
+                return
         first_idx = sorted_idx[0]
         last_idx = sorted_idx[-1]
 
@@ -435,7 +382,7 @@ class LrcStateManager(QObject):
         self.state_changed.emit()
 
     def get_state(self, callback: Callable[["LrcStateManager"], None]) -> None:
-        """Action: GET_STATE — pass current state to callback."""
+        """Pass the current state to *callback*."""
         callback(self)
         self.state_changed.emit()
 

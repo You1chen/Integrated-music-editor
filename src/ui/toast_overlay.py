@@ -1,13 +1,4 @@
-"""Toast overlay — notification queue (replaces toast.tsx).
-
-Rendered as a top-level frameless window that stays above all other
-windows, including modal dialogs.  Repositions automatically when
-the main window moves or resizes.
-
-Each toast is a plain text card on a solid colour:
-  success → white,  warning (failure) → red,  info (hint) → yellow.
-No icon, no close button, no extra decoration.
-"""
+"""Toast overlay — a queue of plain text notification cards."""
 
 from __future__ import annotations
 
@@ -28,7 +19,6 @@ class ToastWidget(QFrame):
         super().__init__(parent)
         self.setObjectName(f"toast{toast_type.capitalize()}")
 
-        # (background, text) per type: success=white, warning=red, info=yellow.
         palettes = {
             "success": ("#ffffff", "#1a1d23"),
             "warning": ("#e74c3c", "#ffffff"),
@@ -55,14 +45,10 @@ class ToastWidget(QFrame):
 
 
 class ToastOverlay(QWidget):
-    """Overlay that shows a queue of toast notifications.
-
-    A top-level frameless tool window that stays on top of everything
-    (including modal dialogs).  Follows the main window position.
-    """
+    """Overlay that shows a queue of toast notifications."""
 
     def __init__(self, main_window: QWidget) -> None:
-        super().__init__(None)  # top-level — no parent
+        super().__init__(None)
         self._main = main_window
 
         self.setWindowFlags(
@@ -81,11 +67,8 @@ class ToastOverlay(QWidget):
 
         self._toasts: list[ToastWidget] = []
 
-        # Track main window moves
         main_window.installEventFilter(self)
         self.hide()
-
-    # ── Tracking main window ────────────────────────────────
 
     def eventFilter(self, obj, event):
         """Follow the main window when it moves or resizes."""
@@ -95,8 +78,6 @@ class ToastOverlay(QWidget):
         ):
             self._reposition()
         return super().eventFilter(obj, event)
-
-    # ── Toast API ───────────────────────────────────────────
 
     def show_toast(self, toast_type: str, text: str) -> None:
         """Add a toast notification to the queue."""
@@ -121,8 +102,6 @@ class ToastOverlay(QWidget):
             self._toasts.remove(toast)
         if not self._toasts:
             self.hide()
-
-    # ── Positioning ─────────────────────────────────────────
 
     def _reposition(self) -> None:
         """Position at top-right of the main window."""

@@ -1,8 +1,4 @@
-"""Meta information editor page — edit audio file metadata (ID3 / Vorbis tags).
-
-Completely independent from the LRC lyrics editor.  Reads and writes tags
-directly in the loaded audio file using :mod:`mutagen`.
-"""
+"""Meta information editor page — edit audio file metadata (ID3 / Vorbis tags)."""
 
 from __future__ import annotations
 
@@ -40,10 +36,6 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-# ── Field definitions ───────────────────────────────────────────
-
-# (field_key, label, placeholder)
-# Standard LRC-compatible fields that overlap with ID3
 _TEXT_FIELDS: list[tuple[str, str, str]] = [
     ("title",       "歌名",       "歌曲名称"),
     ("artist",      "歌手",       "演唱者"),
@@ -57,21 +49,13 @@ _TEXT_FIELDS: list[tuple[str, str, str]] = [
 ]
 
 
-# ── Crop modes ──────────────────────────────────────────────────
-
 CROP_RECT = "rect"
 CROP_SQUARE = "square"
 CROP_CIRCLE = "circle"
 
 
 class CoverCropDialog(QDialog):
-    """Dialog for cropping a cover image before embedding.
-
-    Supports three modes:
-    - **矩形** (rect):  free-form rectangle
-    - **方形** (square): constrained 1∶1 square
-    - **圆形** (circle): square crop with a circular alpha mask
-    """
+    """Dialog for cropping a cover image before embedding."""
 
     def __init__(
         self, image_path: str, parent: QWidget | None = None
@@ -96,12 +80,10 @@ class CoverCropDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # ── Crop preview ──
         self._preview = _CropPreview(self._image)
         self._preview.setMinimumHeight(260)
         layout.addWidget(self._preview, stretch=1)
 
-        # ── Mode selector ──
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(16)
 
@@ -126,7 +108,6 @@ class CoverCropDialog(QDialog):
 
         layout.addLayout(mode_layout)
 
-        # ── Buttons ──
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel
             | QDialogButtonBox.StandardButton.Ok
@@ -143,12 +124,7 @@ class CoverCropDialog(QDialog):
         self._preview.set_crop_mode(self._crop_mode)
 
     def _on_accept(self) -> None:
-        """Crop the image according to the current selection and mode.
-
-        Confirming without drawing a crop box (or with a degenerate zero-size
-        box) is *not* an error — the whole image is used as-is.  Only a real
-        crop marks ``was_cropped``.
-        """
+        """Crop the image according to the current selection and mode."""
         import tempfile
 
         cropped = self._image
@@ -157,7 +133,6 @@ class CoverCropDialog(QDialog):
             x, y, w, h = crop
             if w > 0 and h > 0:
                 if self._crop_mode in (CROP_SQUARE, CROP_CIRCLE):
-                    # Force square: take the shorter side, center the crop
                     size = min(w, h)
                     cx = x + (w - size) // 2
                     cy = y + (h - size) // 2
@@ -168,7 +143,6 @@ class CoverCropDialog(QDialog):
                 self._was_cropped = True
 
                 if self._crop_mode == CROP_CIRCLE:
-                    # Apply circular alpha mask
                     s = cropped.width()
                     result = QImage(s, s, QImage.Format.Format_ARGB32)
                     result.fill(Qt.GlobalColor.transparent)
@@ -183,7 +157,6 @@ class CoverCropDialog(QDialog):
 
                     cropped = result
 
-        # Save as PNG bytes via temp file (supports transparency)
         tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp.close()
         try:
@@ -206,26 +179,22 @@ class CoverCropDialog(QDialog):
 
 
 class _CropPreview(QWidget):
-    """Interactive image crop preview widget.
+    """Interactive image crop preview widget."""
 
-    Displays a scaled image and lets the user drag to define a crop region.
-    Supports rectangle, square (1∶1 constrained), and circle modes.
-    """
-
-    _OVERLAY = QColor(0, 0, 0, 140)       # semi-transparent mask
-    _BORDER = QColor(255, 255, 255, 220)   # crop border
+    _OVERLAY = QColor(0, 0, 0, 140)
+    _BORDER = QColor(255, 255, 255, 220)
     _HANDLE_COLOR = QColor(255, 255, 255)
 
     def __init__(self, image: QImage, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._image = image
         self._crop_mode = CROP_RECT
-        self._crop_rect: QRect | None = None   # in widget coords
+        self._crop_rect: QRect | None = None
         self._dragging = False
-        self._drag_mode = ""                   # "draw" | "move" | "resize"
-        self._drag_corner = ""                 # "tl" | "tr" | "bl" | "br"
+        self._drag_mode = ""
+        self._drag_corner = ""
         self._drag_anchor: QRect | None = None
-        self._drag_origin: None = None  # QPoint at drag start
+        self._drag_origin: None = None
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.CrossCursor)
 
@@ -250,7 +219,6 @@ class _CropPreview(QWidget):
             int(r.height() * sy),
         )
 
-    # ── geometry ─────────────────────────────────────────────
 
     def _image_display_rect(self) -> QRect:
         """Return the rectangle where the image is drawn (centered, keeping AR)."""
@@ -266,13 +234,11 @@ class _CropPreview(QWidget):
         dy = (wh - dh) // 2
         return QRect(dx, dy, dw, dh)
 
-    # ── paint ───────────────────────────────────────────────
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # 1. Draw image centered
         img_rect = self._image_display_rect()
         if img_rect.isValid():
             painter.drawImage(img_rect, self._image)
@@ -280,25 +246,19 @@ class _CropPreview(QWidget):
         if self._crop_rect is not None and self._crop_rect.isValid():
             r = self._crop_rect.normalized()
 
-            # 2. Dark overlay — four rectangles around the crop
             painter.setBrush(self._OVERLAY)
             painter.setPen(Qt.PenStyle.NoPen)
-            # top
             painter.drawRect(0, 0, self.width(), r.top())
-            # bottom
             painter.drawRect(
                 0, r.bottom() + 1, self.width(),
                 self.height() - r.bottom() - 1,
             )
-            # left
             painter.drawRect(0, r.top(), r.left(), r.height())
-            # right
             painter.drawRect(
                 r.right() + 1, r.top(),
                 self.width() - r.right() - 1, r.height(),
             )
 
-            # 3. Crop border
             pen = QPen(self._BORDER, 1.5, Qt.PenStyle.DashLine)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -308,7 +268,6 @@ class _CropPreview(QWidget):
             else:
                 painter.drawRect(r)
 
-            # 4. Corner handles
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(self._HANDLE_COLOR)
             hs = 7
@@ -319,9 +278,8 @@ class _CropPreview(QWidget):
             for cx, cy in corners:
                 painter.drawRect(cx - hs // 2, cy - hs // 2, hs, hs)
 
-    # ── mouse ────────────────────────────────────────────────
 
-    _HANDLE_HIT = 10   # corner hit-test radius
+    _HANDLE_HIT = 10
 
     def _hit_corner(self, pos, r: QRect) -> str:
         """Return corner name ('tl','tr','bl','br') if *pos* is near one."""
@@ -345,7 +303,6 @@ class _CropPreview(QWidget):
         if self._crop_rect is not None and self._crop_rect.isValid():
             corner = self._hit_corner(pos, self._crop_rect)
             if corner:
-                # Resize from corner
                 self._drag_mode = "resize"
                 self._drag_corner = corner
                 self._drag_anchor = QRect(self._crop_rect)
@@ -354,7 +311,6 @@ class _CropPreview(QWidget):
                 self.setCursor(Qt.CursorShape.SizeFDiagCursor)
                 return
             if self._crop_rect.normalized().contains(pos):
-                # Move the existing selection
                 self._drag_mode = "move"
                 self._drag_anchor = QRect(self._crop_rect)
                 self._drag_origin = pos
@@ -362,7 +318,6 @@ class _CropPreview(QWidget):
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)
                 return
 
-        # Draw new selection
         self._drag_mode = "draw"
         self._crop_rect = QRect(pos, pos)
         self._dragging = True
@@ -372,7 +327,6 @@ class _CropPreview(QWidget):
         pos = event.position().toPoint()
 
         if not self._dragging:
-            # Update cursor based on position
             if self._crop_rect is not None and self._crop_rect.isValid():
                 if self._hit_corner(pos, self._crop_rect):
                     self.setCursor(Qt.CursorShape.SizeFDiagCursor)
@@ -404,7 +358,6 @@ class _CropPreview(QWidget):
             r = self._drag_anchor.normalized()
             new_x = r.x() + delta.x()
             new_y = r.y() + delta.y()
-            # Clamp to image bounds
             new_x = max(img_rect.left(), min(img_rect.right() - r.width(), new_x))
             new_y = max(img_rect.top(), min(img_rect.bottom() - r.height(), new_y))
             self._crop_rect = QRect(new_x, new_y, r.width(), r.height())
@@ -438,7 +391,6 @@ class _CropPreview(QWidget):
                         max(r.top() + 10, r.bottom() + delta.y()))
                 )
 
-            # Constrain to square / circle
             if self._crop_mode in (CROP_SQUARE, CROP_CIRCLE):
                 rn = new_rect.normalized()
                 size = min(rn.width(), rn.height())
@@ -478,12 +430,7 @@ class _CropPreview(QWidget):
 
 
 class MetaEditorPage(QScrollArea):
-    """Scrollable audio-metadata editor page.
-
-    Reads existing ID3 / Vorbis tags from the currently-loaded audio file
-    and lets the user edit them.  All changes are written back to the
-    audio file when the user clicks **保存到音频文件**.
-    """
+    """Scrollable audio-metadata editor page."""
 
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__()
@@ -499,7 +446,6 @@ class MetaEditorPage(QScrollArea):
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(12)
 
-        # ── Prompt when no audio is loaded ──────────────────
         self._no_audio_label = QLabel(
             "请先载入音频文件\n\n"
             "在「歌单」页点击歌曲，或把音频文件直接拖到窗口底部，\n"
@@ -512,21 +458,17 @@ class MetaEditorPage(QScrollArea):
         )
         layout.addWidget(self._no_audio_label)
 
-        # ── Editor widget (hidden until audio is loaded) ────
         self._editor = QWidget()
         editor_layout = QVBoxLayout(self._editor)
         editor_layout.setContentsMargins(0, 0, 0, 0)
         editor_layout.setSpacing(12)
 
-        # ── Main left-right split ──
         main_split = QHBoxLayout()
         main_split.setSpacing(12)
 
-        # ==== Left side: cover + save button ====
         left_layout = QVBoxLayout()
         left_layout.setSpacing(12)
 
-        # ---- Cover art ----
         cover_group = QGroupBox("封面图片")
         cover_vlayout = QVBoxLayout(cover_group)
         cover_vlayout.setSpacing(6)
@@ -566,7 +508,6 @@ class MetaEditorPage(QScrollArea):
 
         left_layout.addWidget(cover_group)
 
-        # ---- Save button (unnamed container) ----
         save_container = QWidget()
         save_vlayout = QVBoxLayout(save_container)
         save_vlayout.setContentsMargins(0, 0, 0, 0)
@@ -581,16 +522,13 @@ class MetaEditorPage(QScrollArea):
         left_layout.addStretch()
         main_split.addLayout(left_layout)
 
-        # ==== Right side: text fields ====
         right_layout = QVBoxLayout()
         right_layout.setSpacing(12)
 
-        # ---- Standard text fields ----
         text_group = QGroupBox("基本信息")
         text_form = QFormLayout(text_group)
         text_form.setSpacing(6)
 
-        # ── Filename editor ──
         self._filename_input = QLineEdit()
         self._filename_input.setPlaceholderText("重命名音频文件（不含扩展名）")
         text_form.addRow("文件名:", self._filename_input)
@@ -611,21 +549,17 @@ class MetaEditorPage(QScrollArea):
 
         layout.addWidget(self._editor)
 
-        # ── Track audio changes ─────────────────────────────
         self._mw.audio_manager.state_changed.connect(self._on_audio_state_changed)
         self._last_audio_path: str = ""
 
-        # Initial refresh
         self._refresh()
 
-    # ── Visibility ──────────────────────────────────────────────
 
     def showEvent(self, event) -> None:
         """Refresh form when the page becomes visible."""
         super().showEvent(event)
         self._refresh()
 
-    # ── Core logic ──────────────────────────────────────────────
 
     def _refresh(self) -> None:
         """Re-read audio tags and populate the form."""
@@ -639,12 +573,10 @@ class MetaEditorPage(QScrollArea):
         self._editor.show()
         self._no_audio_label.hide()
 
-        # Only reload if the audio file changed
         if path == self._last_audio_path:
             return
         self._last_audio_path = path
 
-        # ── Populate filename (stem only, no extension) ──
         stem, _ = os.path.splitext(os.path.basename(path))
         self._filename_input.setText(stem)
 
@@ -659,13 +591,11 @@ class MetaEditorPage(QScrollArea):
             return
 
         if audio is None:
-            # mutagen doesn't know this format
             self._clear_form()
             return
 
         tags = getattr(audio, "tags", None)
 
-        # ── ID3 (MP3) ──────────────────────────────────────
         if isinstance(tags, ID3):
             self._inputs["title"].setText(
                 _id3_text(tags, TIT2)
@@ -695,7 +625,6 @@ class MetaEditorPage(QScrollArea):
                 _id3_comment(tags)
             )
 
-            # Cover art
             apic = tags.getall("APIC")
             if apic:
                 self._cover_data = apic[0].data
@@ -713,7 +642,6 @@ class MetaEditorPage(QScrollArea):
                 self._cover_thumbnail.setText("无封面")
                 self._cover_info.setText("")
 
-        # ── VorbisComments (FLAC / Ogg) ────────────────────
         elif tags is not None:
             self._inputs["title"].setText(
                 _vc_text(tags, "title")
@@ -743,7 +671,6 @@ class MetaEditorPage(QScrollArea):
                 _vc_text(tags, "comment") or _vc_text(tags, "description")
             )
 
-            # Cover art (FLAC pictures)
             pics = getattr(audio, "pictures", None)
             if pics:
                 self._cover_data = pics[0].data
@@ -776,7 +703,6 @@ class MetaEditorPage(QScrollArea):
             QMessageBox.warning(self, "错误", "不支持的音频格式，无法写入元信息")
             return
 
-        # Ensure tags exist (files without any existing tags)
         tags = getattr(audio, "tags", None)
         if tags is None:
             try:
@@ -786,7 +712,6 @@ class MetaEditorPage(QScrollArea):
                 QMessageBox.warning(self, "错误", "无法为此文件创建标签")
                 return
 
-        # ── ID3 (MP3) ──────────────────────────────────────
         if isinstance(tags, ID3):
             _set_id3_text(tags, TIT2, self._inputs["title"].text())
             _set_id3_text(tags, TPE1, self._inputs["artist"].text())
@@ -813,14 +738,13 @@ class MetaEditorPage(QScrollArea):
                     COMM(encoding=3, lang="zho", desc="", text=comment)
                 )
 
-            # Cover art
             tags.delall("APIC")
             if self._cover_data:
                 tags.add(
                     APIC(
                         encoding=3,
                         mime=self._cover_mime,
-                        type=3,  # Cover (front)
+                        type=3,
                         desc="cover",
                         data=self._cover_data,
                     )
@@ -832,7 +756,6 @@ class MetaEditorPage(QScrollArea):
             )
             return
 
-        # ── VorbisComments (FLAC / Ogg) ────────────────────
         if hasattr(tags, "get"):
             _set_vc_text(tags, "title", self._inputs["title"].text())
             _set_vc_text(tags, "artist", self._inputs["artist"].text())
@@ -844,13 +767,12 @@ class MetaEditorPage(QScrollArea):
             _set_vc_text(tags, "genre", self._inputs["genre"].text())
             _set_vc_text(tags, "comment", self._inputs["comment"].text())
 
-            # Cover art for FLAC
             if hasattr(audio, "clear_pictures") and hasattr(audio, "add_picture"):
                 audio.clear_pictures()
                 if self._cover_data:
                     from mutagen.flac import Picture
                     pic = Picture()
-                    pic.type = 3  # Cover (front)
+                    pic.type = 3
                     pic.mime = self._cover_mime
                     pic.desc = "cover"
                     pic.data = self._cover_data
@@ -874,14 +796,12 @@ class MetaEditorPage(QScrollArea):
         self._cover_data = None
         self._cover_mime = ""
 
-    # ── Cover art helpers ────────────────────────────────────────
 
     def _set_cover_button_icon(self, data: bytes | None) -> None:
         """Update the cover thumbnail button with the given image data."""
         if data:
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
-                # Square → stretch to fill; rectangle → fit keeping ratio
                 mode = (
                     Qt.AspectRatioMode.IgnoreAspectRatio
                     if pixmap.width() == pixmap.height()
@@ -917,7 +837,6 @@ class MetaEditorPage(QScrollArea):
         if not file_path:
             return
 
-        # Open crop dialog
         crop_dialog = CoverCropDialog(file_path, self)
         if crop_dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -942,14 +861,12 @@ class MetaEditorPage(QScrollArea):
         self._cover_thumbnail.setText("无封面")
         self._cover_info.setText("")
 
-    # ── Slots ────────────────────────────────────────────────────
 
     def _on_audio_state_changed(self, data) -> None:
         """Refresh when audio source changes (e.g. new file loaded)."""
-        # The DURATION_LOADED state indicates a new file is ready
         from ..core.audio_manager import AudioState
         if data.type == AudioState.DURATION_LOADED:
-            self._last_audio_path = ""  # force re-read
+            self._last_audio_path = ""
             self._refresh()
 
     def _notify_playlist(self, old_path: str, new_path: str) -> None:
@@ -960,17 +877,15 @@ class MetaEditorPage(QScrollArea):
             if playlist_page is not None and hasattr(playlist_page, "refresh_song"):
                 playlist_page.refresh_song(old_path, new_path)
         except Exception:
-            pass  # Best-effort, don't break save on playlist errors
+            pass
 
     def _on_save(self) -> None:
-        """Write all current form values to the audio file,
-        and rename the file if the filename was changed."""
+        """Write the form values to the audio file, renaming the file if the name changed."""
         path = self._mw.audio_manager.local_path
         if not path:
             self._mw.toast_overlay.show_toast("warning", "请先载入音频文件")
             return
 
-        # ── Validate filename before saving ──
         new_stem = self._filename_input.text().strip()
         if not new_stem:
             self._mw.toast_overlay.show_toast(
@@ -978,20 +893,17 @@ class MetaEditorPage(QScrollArea):
             )
             return
 
-        # ── 1. Save metadata tags ──
         self._save_to_audio(path)
 
-        # ── 2. Rename file if filename changed ──
         old_dir = os.path.dirname(path)
         _stem, ext = os.path.splitext(os.path.basename(path))
         if new_stem == _stem:
-            # Tags saved, no rename — still refresh playlist
             self._notify_playlist(path, "")
             return
 
         new_path = os.path.join(old_dir, new_stem + ext)
         if os.path.normpath(new_path) == os.path.normpath(path):
-            return  # same file (case-only change on Windows)
+            return
 
         if os.path.exists(new_path):
             self._mw.toast_overlay.show_toast(
@@ -1000,7 +912,6 @@ class MetaEditorPage(QScrollArea):
             )
             return
 
-        # ── Release file lock before renaming ──
         self._mw.audio_manager._player.stop()
         self._mw.audio_manager._player.setSource(QUrl())
 
@@ -1008,28 +919,24 @@ class MetaEditorPage(QScrollArea):
             os.rename(path, new_path)
         except OSError as e:
             self._mw.toast_overlay.show_toast("warning", f"重命名失败：{e}")
-            # Re-load original file
             self._mw.audio_manager.set_source(
                 QUrl.fromLocalFile(path).toString()
             )
             return
 
-        # ── Also rename matching .lrc file if it exists ──
         old_lrc = os.path.splitext(path)[0] + ".lrc"
         if os.path.isfile(old_lrc):
             new_lrc = os.path.join(old_dir, new_stem + ".lrc")
             try:
                 os.rename(old_lrc, new_lrc)
             except OSError:
-                pass  # LRC rename is best-effort
+                pass
 
-        # ── 3. Reload audio from new path ──
         url = QUrl.fromLocalFile(new_path).toString()
         self._mw.audio_manager.set_source(url)
         self._mw.config.remember_mp3_path(new_path)
         self._last_audio_path = new_path
 
-        # ── 4. Refresh playlist entry ──
         self._notify_playlist(path, new_path)
 
         self._mw.toast_overlay.show_toast(
@@ -1037,11 +944,9 @@ class MetaEditorPage(QScrollArea):
         )
 
 
-# ── mutagen helper functions ─────────────────────────────────────
-
 def _id3_text(tags: ID3, frame_cls) -> str:
     """Get the first text value from an ID3 text frame, or ''."""
-    frame = tags.get(frame_cls.__name__)  # e.g. "TIT2"
+    frame = tags.get(frame_cls.__name__)
     if frame is None:
         return ""
     return str(frame.text[0]) if frame.text else ""

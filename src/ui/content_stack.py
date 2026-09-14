@@ -1,4 +1,4 @@
-"""Content stack — QStackedWidget page router (replaces hash-based routing)."""
+"""Content stack — QStackedWidget page router."""
 
 from __future__ import annotations
 
@@ -18,8 +18,6 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-# ── Default Theme Colors (mirrors usePref.ts themeColor) ───
-
 THEME_COLORS = {
     "orange": "#ff691f",
     "yellow": "#fab81e",
@@ -33,9 +31,8 @@ THEME_COLORS = {
     "purple": "#c877fe",
 }
 
-DEFAULT_THEME_COLOR = "#f58ea8"  # pink
+DEFAULT_THEME_COLOR = "#f58ea8"
 
-# ── Shared theme state ─────────────────────────────────────
 
 _CURRENT_DARK: bool = False
 _CURRENT_BG: str = "#f5f6f8"
@@ -44,8 +41,7 @@ _CURRENT_THEME_COLOR: str = DEFAULT_THEME_COLOR
 
 
 class _ThemeEvents(QObject):
-    """Broadcasts theme rebuilds so widgets with cached inline styles
-    (computed once from ``get_theme_colors()``) can re-polish themselves."""
+    """Emits a signal after every theme rebuild."""
 
     changed = pyqtSignal()
 
@@ -54,11 +50,7 @@ theme_events = _ThemeEvents()
 
 
 def is_dark_theme() -> bool:
-    """Return whether the current effective theme is dark.
-
-    Use this from any widget that needs to pick adaptive colors.
-    It is updated every time ``apply_theme()`` is called.
-    """
+    """Return whether the current effective theme is dark."""
     return _CURRENT_DARK
 
 
@@ -67,8 +59,6 @@ def get_theme_colors() -> tuple[str, str, str, bool]:
     return _CURRENT_BG, _CURRENT_FG, _CURRENT_THEME_COLOR, _CURRENT_DARK
 
 
-# ── Color helpers ─────────────────────────────────────────
-
 def _hex_to_rgb(color: str) -> tuple[int, int, int]:
     """Parse a ``#rrggbb`` color into an (r, g, b) tuple."""
     color = color.lstrip("#")
@@ -76,13 +66,7 @@ def _hex_to_rgb(color: str) -> tuple[int, int, int]:
 
 
 def _rgba(color: str, alpha: float) -> str:
-    """Return ``rgba(r, g, b, a)`` for a ``#rrggbb`` color.
-
-    Qt's QSS parser interprets 8-digit hex as ``#AARRGGBB`` (alpha first),
-    so ``"#f58ea8" + "33"`` would NOT mean "pink at 20% opacity" — it would
-    be parsed as alpha=0xf5 with a greenish RGB.  Always spell transparency
-    out as ``rgba()`` to avoid that trap.
-    """
+    """Return ``rgba(r, g, b, a)`` for a ``#rrggbb`` color."""
     r, g, b = _hex_to_rgb(color)
     return f"rgba({r}, {g}, {b}, {alpha})"
 
@@ -107,15 +91,12 @@ def apply_theme(prefs: dict) -> None:
     theme_color = prefs.get("themeColor", DEFAULT_THEME_COLOR)
     theme_mode = prefs.get("themeMode", ThemeMode.AUTO)
 
-    # Parse theme color to RGB
     r, g, b = _hex_to_rgb(theme_color)
 
-    # Determine dark/light
     system_dark = False
     try:
         from PyQt6.QtCore import Qt as QtCore
         scheme = app.styleHints().colorScheme()
-        # Qt.ColorScheme.Dark = 1 (added in PyQt6 6.5)
         system_dark = (int(scheme) == 1)
     except (AttributeError, ImportError, TypeError):
         pass
@@ -125,7 +106,6 @@ def apply_theme(prefs: dict) -> None:
         (theme_mode == ThemeMode.AUTO and system_dark)
     )
 
-    # ── Palette (design tokens) ─────────────────────────────
     if dark:
         bg = "#121417"
         surface = "#1a1e24"
@@ -137,14 +117,13 @@ def apply_theme(prefs: dict) -> None:
 
     accent = theme_color
     accent_contrast = "#111111" if _is_light_color(r, g, b) else "#eeeeee"
-    accent_soft = _rgba(accent, 0.16)       # subtle hover fill
+    accent_soft = _rgba(accent, 0.16)
     accent_soft_strong = _rgba(accent, 0.30)
-    border = _rgba(fg, 0.12)                # hairline
-    border_strong = _rgba(fg, 0.22)         # visible border
-    muted = _blend(fg, bg, 0.55)            # secondary text
-    faint = _blend(fg, bg, 0.34)            # placeholder/hint text
+    border = _rgba(fg, 0.12)
+    border_strong = _rgba(fg, 0.22)
+    muted = _blend(fg, bg, 0.55)
+    faint = _blend(fg, bg, 0.34)
 
-    # Store for use by other modules
     global _CURRENT_DARK, _CURRENT_BG, _CURRENT_FG, _CURRENT_THEME_COLOR
     _CURRENT_DARK = dark
     _CURRENT_BG = bg
@@ -671,7 +650,6 @@ def apply_theme(prefs: dict) -> None:
 
     app.setStyleSheet(qss)
 
-    # Also set palette for native dialogs etc.
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, QColor(bg))
     palette.setColor(QPalette.ColorRole.WindowText, QColor(fg))
@@ -688,16 +666,11 @@ def apply_theme(prefs: dict) -> None:
     palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(faint))
     app.setPalette(palette)
 
-    # Let widgets that cache inline styles re-read the new theme colors.
     theme_events.changed.emit()
 
 
 def _is_light_color(r: int, g: int, b: int) -> bool:
-    """Determine if a color is light (for contrast choice).
-
-    Ports the WCAG luminance check from content.tsx.
-    """
-    # luminance
+    """Determine if a color is light (for contrast choice)."""
     def lum(v: int) -> float:
         s = v / 255.0
         return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
@@ -708,10 +681,7 @@ def _is_light_color(r: int, g: int, b: int) -> bool:
 
 
 class ContentStack(QStackedWidget):
-    """Page router using QStackedWidget.
-
-    Manages the 5 pages and their visibility.
-    """
+    """Page router using QStackedWidget."""
 
     sync_page_active_changed = pyqtSignal(bool)
 
@@ -719,7 +689,6 @@ class ContentStack(QStackedWidget):
         super().__init__(main_window)
         self._main_window = main_window
 
-        # Pages will be set from outside after construction
         self._pages: dict[int, QWidget] = {}
 
     def register_page(self, route: int, widget: QWidget) -> None:
@@ -734,10 +703,8 @@ class ContentStack(QStackedWidget):
             prev_was_sync = self.currentIndex() == PageRoute.SYNCHRONIZER
             self.setCurrentWidget(widget)
 
-            # Update header selection
             self._main_window.header_bar.set_active(route)
 
-            # Emit sync page state changes
             is_sync = route == PageRoute.SYNCHRONIZER
             if prev_was_sync != is_sync:
                 self.sync_page_active_changed.emit(is_sync)

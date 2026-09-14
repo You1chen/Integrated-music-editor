@@ -1,14 +1,4 @@
-"""Release builder — produces a standalone ``dist/lrc-maker.exe`` via PyInstaller.
-
-Usage::
-
-    python build_release.py          # build only
-    python build_release.py --zip    # build and create a .zip for distribution
-
-After a successful build the executable lives at ``dist/lrc-maker.exe``.
-Distribute the entire ``dist/lrc-maker/`` folder (the .exe needs its
-sibling DLLs / plugins).
-"""
+"""Release builder — produces a standalone ``dist/lrc-maker.exe`` via PyInstaller."""
 
 import argparse
 import shutil
@@ -64,7 +54,6 @@ def build() -> Path:
 def make_zip(exe: Path) -> Path:
     """Bundle the dist folder into a .zip for distribution."""
     zip_path = DIST / "lrc-maker-release.zip"
-    # The dist folder contains the exe and the internal folder with DLLs
     print(f"Creating {zip_path.name} ...")
     base = shutil.make_archive(
         str(zip_path.with_suffix("")),

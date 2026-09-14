@@ -1,8 +1,4 @@
-"""Preferences page — all settings (replaces preferences.tsx).
-
-Theme color, dark/light mode, language, LRC format, toggles.
-All sections are collapsible.
-"""
+"""Preferences page — all settings in collapsible sections."""
 
 from __future__ import annotations
 
@@ -52,15 +48,8 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-# ── Collapsible Group ──────────────────────────────────────────
-
-
 class _CollapsibleGroup(QWidget):
-    """A group box whose content can be toggled by clicking the header.
-
-    Uses the global QSS ``#collapsibleHeader`` for theming — no inline
-    styles, so it updates automatically when the theme changes.
-    """
+    """A group box whose content can be toggled by clicking the header."""
 
     def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -71,17 +60,12 @@ class _CollapsibleGroup(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
 
-        # Header button — styled via global QSS #collapsibleHeader
         self._header_btn = QPushButton(self._arrow() + " " + title)
         self._header_btn.setObjectName("collapsibleHeader")
         self._header_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._header_btn.clicked.connect(self._toggle)
         self._layout.addWidget(self._header_btn)
 
-        # Content area
-        # NOTE: parent right away — a parentless QWidget that is shown
-        # before being added to a layout becomes a top-level native
-        # window and flashes on screen during startup.
         self._content = QWidget(self)
         self._content.setStyleSheet("QWidget { background: transparent; border: none; }")
         self._content.setVisible(expanded)
@@ -101,12 +85,11 @@ class _CollapsibleGroup(QWidget):
 
 
 class _NoWheelFilter(QObject):
-    """Consume mouse-wheel events so numeric spinboxes and combos
-    can't be changed by scrolling (avoids accidental value changes)."""
+    """Consume mouse-wheel events so spinboxes and combos ignore scrolling."""
 
     def eventFilter(self, obj, event) -> bool:
         if event.type() == QEvent.Type.Wheel:
-            return True  # swallow the wheel event entirely
+            return True
         return super().eventFilter(obj, event)
 
 
@@ -129,7 +112,6 @@ class PreferencesPage(QScrollArea):
 
         prefs = main_window.config.get_preferences()
 
-        # ── About ────────────────────────────────────
         about = _CollapsibleGroup("关于")
         about_layout = QFormLayout()
         about_layout.addRow("版本：", QLabel("6.0.0 (Python)"))
@@ -143,7 +125,6 @@ class PreferencesPage(QScrollArea):
         about.set_content_layout(about_layout)
         layout.addWidget(about)
 
-        # ── Theme Mode ───────────────────────────────
         theme = _CollapsibleGroup("主题模式")
         theme_layout = QFormLayout()
 
@@ -163,7 +144,6 @@ class PreferencesPage(QScrollArea):
         theme.set_content_layout(theme_layout)
         layout.addWidget(theme)
 
-        # ── Theme Color ──────────────────────────────
         color_group = _CollapsibleGroup("主题颜色")
         color_layout = QHBoxLayout()
 
@@ -187,7 +167,6 @@ class PreferencesPage(QScrollArea):
             color_layout.addWidget(btn)
             self._color_buttons[name] = btn
 
-        # Custom color button
         custom_btn = QPushButton("#")
         custom_btn.setFixedSize(28, 28)
         custom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -208,7 +187,6 @@ class PreferencesPage(QScrollArea):
         color_group.set_content_layout(color_layout)
         layout.addWidget(color_group)
 
-        # ── Display Options ──────────────────────────
         display = _CollapsibleGroup("显示")
         display_layout = QFormLayout()
 
@@ -230,7 +208,6 @@ class PreferencesPage(QScrollArea):
         display.set_content_layout(display_layout)
         layout.addWidget(display)
 
-        # ── File Memory ─────────────────────────────
         file_memory = _CollapsibleGroup("文件与路径记忆", expanded=False)
         file_memory_layout = QFormLayout()
 
@@ -264,7 +241,6 @@ class PreferencesPage(QScrollArea):
             "记住上次打开的音频文件:", self._remember_mp3_cb
         )
 
-        # Default browse directory
         browse_layout = QHBoxLayout()
         self._browse_dir_input = QLineEdit()
         self._browse_dir_input.setText(self._mw.config.get_default_browse_dir())
@@ -277,7 +253,6 @@ class PreferencesPage(QScrollArea):
 
         file_memory_layout.addRow("默认浏览目录:", browse_layout)
 
-        # Default cover browse directory
         cover_browse_layout = QHBoxLayout()
         self._cover_browse_dir_input = QLineEdit()
         self._cover_browse_dir_input.setText(
@@ -316,7 +291,6 @@ class PreferencesPage(QScrollArea):
         file_memory.set_content_layout(file_memory_layout)
         layout.addWidget(file_memory)
 
-        # ── Sync Assist ──────────────────────────────
         sync = _CollapsibleGroup("打轴辅助", expanded=False)
         sync_layout = QFormLayout()
 
@@ -360,7 +334,6 @@ class PreferencesPage(QScrollArea):
         sync.set_content_layout(sync_layout)
         layout.addWidget(sync)
 
-        # ── LRC Format ───────────────────────────────
         format_group = _CollapsibleGroup("歌词输出格式控制", expanded=False)
         format_layout = QFormLayout()
 
@@ -383,24 +356,18 @@ class PreferencesPage(QScrollArea):
         self._space_end.valueChanged.connect(self._on_format_changed)
         format_layout.addRow("右侧空格:", self._space_end)
 
-        # Format preview
         self._format_preview = QLabel()
         format_layout.addRow("预览：", self._format_preview)
 
         format_group.set_content_layout(format_layout)
         layout.addWidget(format_group)
 
-        # ── Keyboard Shortcuts ──────────────────────────
         self._shortcut_labels: dict[str, QLabel] = {}
         shortcuts_group = self._create_shortcuts_section()
         layout.addWidget(shortcuts_group)
 
         layout.addStretch()
 
-        # ── Disable mouse-wheel value changes ────────────────
-        # Numeric spinboxes and combos should only change by explicit
-        # click/typing — wheel scrolling over them silently changes
-        # values otherwise.
         self._no_wheel_filter = _NoWheelFilter(self)
         for w in (
             self._theme_combo, self._fixed_combo,
@@ -409,10 +376,6 @@ class PreferencesPage(QScrollArea):
         ):
             w.installEventFilter(self._no_wheel_filter)
 
-        # ── Preference undo / redo ────────────────────────────
-        # Each tweak (spinbox drag, checkbox toggle, color pick, …)
-        # records the pre-change snapshot.  Rapid changes to the same
-        # control are coalesced via a debounce timer into one undo step.
         self._snapshot_prefs: dict = dict(prefs)
         self._undo_stack: list[tuple] = []
         self._redo_stack: list[tuple] = []
@@ -422,10 +385,7 @@ class PreferencesPage(QScrollArea):
         self._dirty_timer.setInterval(350)
         self._dirty_timer.timeout.connect(self._commit_pending_undo)
 
-        # Update preview
         self._update_format_preview()
-
-    # ── Keyboard Shortcuts ────────────────────────────────────
 
     def _create_shortcuts_section(self) -> _CollapsibleGroup:
         """Build the keyboard shortcuts settings group with search filter."""
@@ -434,7 +394,6 @@ class PreferencesPage(QScrollArea):
         content_layout = QVBoxLayout()
         content_layout.setSpacing(6)
 
-        # Top bar: search + reset-all
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 4)
         top_layout.setSpacing(8)
@@ -452,7 +411,6 @@ class PreferencesPage(QScrollArea):
 
         content_layout.addLayout(top_layout)
 
-        # Each sub-group is a nested collapsible section
         self._shortcut_rows: dict[str, tuple[_CollapsibleGroup, QLayout]] = {}
         self._shortcut_subgroups: list[_CollapsibleGroup] = []
         user_bindings = self._mw.keybinding_manager.bindings
@@ -526,13 +484,11 @@ class PreferencesPage(QScrollArea):
         """Filter shortcut rows by search text."""
         query = text.strip().lower()
 
-        # Build label lookup once
         from ..core.constants import InputAction
         _label_map: dict[str, str] = {}
         for act, label in ACTION_LABELS.items():
             _label_map[act.value] = label
 
-        # Track visible children per sub-group
         group_visible: dict[int, bool] = {}
 
         for action_str, (sub, row) in self._shortcut_rows.items():
@@ -547,13 +503,12 @@ class PreferencesPage(QScrollArea):
             gid = id(sub)
             group_visible[gid] = group_visible.get(gid, False) or visible
 
-        # Show/hide sub-groups; auto-expand those with matches when searching
         for sub in self._shortcut_subgroups:
             if query:
                 has_match = group_visible.get(id(sub), False)
                 sub.setVisible(has_match)
                 if has_match and not sub._expanded:
-                    sub._toggle()  # expand to reveal matches
+                    sub._toggle()
             else:
                 sub.setVisible(True)
 
@@ -608,22 +563,20 @@ class PreferencesPage(QScrollArea):
         if len(self._undo_stack) > 50:
             self._undo_stack.pop(0)
 
-    # ── Handlers ─────────────────────────────────────────
-
     def _on_theme_mode_changed(self, index: int) -> None:
         mode = self._theme_combo.itemData(index)
         if mode is not None:
             prefs = self._mw.config.get_preferences()
             prefs["themeMode"] = mode
             self._apply_new_prefs(prefs)
-            self._mw.lrc_state.state_changed.emit()  # refresh inline row styles
+            self._mw.lrc_state.state_changed.emit()
 
     def _on_color_pick(self, color: str) -> None:
         prefs = self._mw.config.get_preferences()
         prefs["themeColor"] = color
         self._apply_new_prefs(prefs)
         self._update_color_buttons(color)
-        self._mw.lrc_state.state_changed.emit()  # refresh inline row styles
+        self._mw.lrc_state.state_changed.emit()
 
     def _on_custom_color(self) -> None:
         color = QColorDialog.getColor()
@@ -633,7 +586,7 @@ class PreferencesPage(QScrollArea):
             prefs["themeColor"] = hex_color
             self._apply_new_prefs(prefs)
             self._update_color_buttons(hex_color)
-            self._mw.lrc_state.state_changed.emit()  # refresh inline row styles
+            self._mw.lrc_state.state_changed.emit()
 
     def _on_toggle_changed(self) -> None:
         self._save_prefs()
@@ -671,8 +624,6 @@ class PreferencesPage(QScrollArea):
         prefs["undoSeekBackSeconds"] = self._undo_seek_back.value()
         self._apply_new_prefs(prefs)
 
-    # ── Preference undo / redo ────────────────────────────────
-
     def _apply_new_prefs(self, new_prefs: dict) -> None:
         """Record a pre-change snapshot, then apply *new_prefs*."""
         self._mark_dirty()
@@ -680,17 +631,11 @@ class PreferencesPage(QScrollArea):
         self._mw.update_preferences(new_prefs)
 
     def _mark_dirty(self) -> None:
-        """Queue an undo snapshot of the state before this change burst.
-
-        Rapid changes (e.g. dragging a spinbox) all share the same
-        ``_pending_before``, so they collapse into one undo step once
-        the debounce timer fires.
-        """
+        """Queue an undo snapshot of the state before the current change burst."""
         if self._pending_before is None:
             self._pending_before = dict(self._snapshot_prefs)
             self._dirty_timer.start()
         else:
-            # Same burst — keep the original before-state, restart the timer
             self._dirty_timer.start()
 
     def _commit_pending_undo(self) -> None:
@@ -701,13 +646,13 @@ class PreferencesPage(QScrollArea):
             ("prefs", self._pending_before, dict(self._snapshot_prefs))
         )
         self._pending_before = None
-        self._redo_stack.clear()  # new change invalidates redo history
+        self._redo_stack.clear()
         if len(self._undo_stack) > 50:
             self._undo_stack.pop(0)
 
     def undo(self) -> bool:
         """Undo the last preference / keybinding change."""
-        self._commit_pending_undo()  # finalize an in-flight change first
+        self._commit_pending_undo()
         if not self._undo_stack:
             return False
         op = self._undo_stack.pop()
@@ -888,9 +833,6 @@ class PreferencesPage(QScrollArea):
         self._format_preview.setText(f"{time_str}{text_str}")
 
 
-# ── Key Capture Dialog ─────────────────────────────────────────
-
-
 class _KeyCaptureDialog(QDialog):
     """Modal dialog that captures a single key press for shortcut rebinding."""
 
@@ -908,13 +850,11 @@ class _KeyCaptureDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        # Instruction
         instr = QLabel("请按下新的快捷键组合…")
         instr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instr.setStyleSheet("font-size: 14px; color: #aaa;")
         layout.addWidget(instr)
 
-        # Captured key display
         self._capture_label = QLabel("等待按键…")
         self._capture_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._capture_label.setStyleSheet(
@@ -924,7 +864,6 @@ class _KeyCaptureDialog(QDialog):
         )
         layout.addWidget(self._capture_label)
 
-        # Current bindings
         user_bindings = main_window.keybinding_manager.bindings
         current = user_bindings.get(action, [])
         current_text = " / ".join(keybinding_to_string(b) for b in current) if current else "(未设置)"
@@ -933,7 +872,6 @@ class _KeyCaptureDialog(QDialog):
         current_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(current_lbl)
 
-        # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
@@ -954,7 +892,6 @@ class _KeyCaptureDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
-        # Capture key events
         self.installEventFilter(self)
 
     def eventFilter(self, obj, event) -> bool:
@@ -964,7 +901,6 @@ class _KeyCaptureDialog(QDialog):
             key = event.key()
             modifiers = event.modifiers()
 
-            # Ignore standalone modifier keys
             if key in (
                 Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt,
                 Qt.Key.Key_Meta, Qt.Key.Key_AltGr,
@@ -975,10 +911,8 @@ class _KeyCaptureDialog(QDialog):
             shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
             alt = bool(modifiers & Qt.KeyboardModifier.AltModifier)
 
-            # For character keys, prefer the text representation
             text = event.text()
             if text and len(text) == 1 and text.isprintable() and not ctrl and not alt:
-                # Plain key with maybe shift → use character
                 self._captured = KeyBinding(
                     key=text.lower() if not shift else text,
                     ctrl_key=ctrl,

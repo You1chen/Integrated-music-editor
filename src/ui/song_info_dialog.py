@@ -1,16 +1,4 @@
-"""Song info dialog — view / edit a single song's metadata and literal lyrics.
-
-Opened from the playlist panel's "…" button.  It shows the song at that
-queue position (NOT the currently-playing one) and never touches playback:
-
-  - 元信息 tab: embedded cover (read-only) + editable text tags, saved
-    straight into the audio file with mutagen.
-  - 歌词 tab: the no-timestamp literal lyrics.  Translations are shown on
-    their own line prefixed with "↳ ".  On save, a similarity diff
-    (difflib.SequenceMatcher) maps the edited plain text back onto the
-    timestamped lines, so lightly-edited lines keep their timestamps and
-    their translation pairing.
-"""
+"""Song info dialog — view / edit a single song's metadata and literal lyrics."""
 
 from __future__ import annotations
 
@@ -47,10 +35,8 @@ from ..core.lrc_parser import (
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-#: Prefix marking a translation line in the plain (no-timestamp) editor.
 _TRAN_MARKER = "↳ "
 
-#: (field_key, label) for the metadata form.
 _TEXT_FIELDS: list[tuple[str, str]] = [
     ("title", "歌名"),
     ("artist", "歌手"),
@@ -67,9 +53,6 @@ _TEXT_FIELDS: list[tuple[str, str]] = [
 def _lrc_path(audio_path: str) -> str:
     stem = os.path.splitext(audio_path)[0]
     return stem + ".lrc"
-
-
-# ── Metadata tag helpers (ID3 + VorbisComment) ──────────────────
 
 
 def _first(lst) -> str:
@@ -238,9 +221,6 @@ def _read_cover(path: str) -> Optional[QPixmap]:
     return None
 
 
-# ── Literal lyrics ↔ timestamped lines ──────────────────────────
-
-
 def _is_trans_line(text: str) -> bool:
     return text.startswith(_TRAN_MARKER)
 
@@ -271,7 +251,6 @@ def _apply_lyric_edit(
     new_lines = [ln.rstrip("\r") for ln in new_text.split("\n")]
     sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
 
-    # (time, text, is_translation)
     flat: list[tuple[Optional[float], str, bool]] = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
@@ -292,9 +271,7 @@ def _apply_lyric_edit(
             for t in range(j1, j2):
                 text = new_lines[t]
                 flat.append((None, text, _is_trans_line(text)))
-        # "delete": dropped
 
-    # Re-pair translations onto the preceding original line.
     lyric: list[LyricLine] = []
     for time, text, is_trans in flat:
         if is_trans:
@@ -327,7 +304,6 @@ class SongInfoDialog(QDialog):
         self._tabs = QTabWidget()
         root.addWidget(self._tabs, stretch=1)
 
-        # ── Tab 1: metadata ──
         meta_tab = QWidget()
         meta_layout = QVBoxLayout(meta_tab)
         meta_layout.setContentsMargins(12, 12, 12, 12)
@@ -359,7 +335,6 @@ class SongInfoDialog(QDialog):
         meta_layout.addStretch()
         self._tabs.addTab(meta_tab, "元信息")
 
-        # ── Tab 2: literal lyrics ──
         lyric_tab = QWidget()
         lyric_layout = QVBoxLayout(lyric_tab)
         lyric_layout.setContentsMargins(12, 12, 12, 12)
@@ -378,13 +353,10 @@ class SongInfoDialog(QDialog):
         lyric_layout.addWidget(lyric_save)
         self._tabs.addTab(lyric_tab, "歌词")
 
-        # ── Load ──
         self._load()
 
-    # ── Load ────────────────────────────────────────────────
 
     def _load(self) -> None:
-        # Cover
         pix = _read_cover(self._path)
         if pix is not None:
             self._cover_label.setPixmap(
@@ -396,11 +368,9 @@ class SongInfoDialog(QDialog):
             )
             self._cover_label.setText("")
 
-        # Metadata
         for key, value in _read_tags(self._path).items():
             self._inputs[key].setText(value)
 
-        # Lyrics
         lrc_path = _lrc_path(self._path)
         if os.path.isfile(lrc_path):
             try:
@@ -415,7 +385,6 @@ class SongInfoDialog(QDialog):
             self._info, self._old_lines, self._old_meta = {}, [], []
         self._lyric_edit.setPlainText("\n".join(self._old_lines))
 
-    # ── Save ────────────────────────────────────────────────
 
     def _on_save_meta(self) -> None:
         values = {key: inp.text() for key, inp in self._inputs.items()}
@@ -447,12 +416,9 @@ class SongInfoDialog(QDialog):
         self._mw.toast_overlay.show_toast("success", "歌词已保存")
         self._refresh_playlist()
 
-        # If this song is the one currently loaded, refresh the in-memory
-        # lyrics so the home axis stays in sync (no playback disruption).
         if _norm(self._mw.audio_manager.local_path) == _norm(self._path):
             self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
 
-    # ── Best-effort refresh ─────────────────────────────────
 
     def _refresh_playlist(self) -> None:
         try:

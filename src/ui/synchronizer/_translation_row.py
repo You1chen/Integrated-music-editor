@@ -1,14 +1,4 @@
-"""A translation editing row below a lyric row.
-
-Has an empty 105px placeholder (matching timestamp button width)
-and a QLineEdit for editing the translation text.
-
-Signals
-------
-translation_changed(int, str) — index + new text (per-keystroke)
-translation_finished(int)      — user finished editing (Enter / focus loss)
-row_clicked(int)               — user clicked empty area → select parent line
-"""
+"""A translation editing row below a lyric row."""
 
 from __future__ import annotations
 
@@ -54,12 +44,10 @@ class _TranslationRow(QFrame):
         layout.setContentsMargins(4, 0, 8, 0)
         layout.setSpacing(6)
 
-        # ── 105px empty placeholder (aligns with timestamp button) ──
         self._empty_placeholder = QLabel()
         self._empty_placeholder.setFixedWidth(105)
         layout.addWidget(self._empty_placeholder)
 
-        # ── Editable translation field ──
         self._trans_edit = QLineEdit()
         self._trans_edit.setPlaceholderText("输入翻译…")
         self._trans_edit.setText(line.translation)
@@ -90,7 +78,7 @@ class _TranslationRow(QFrame):
         self.translation_changed.emit(self._index, text)
 
     def _on_editing_finished(self) -> None:
-        """User pressed Enter or left the field — push undo snapshot."""
+        """User finished editing the field (Enter or focus loss)."""
         self.translation_finished.emit(self._index)
 
     def _restyle(self) -> None:

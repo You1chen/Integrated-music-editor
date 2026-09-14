@@ -1,18 +1,4 @@
-"""Playlist panel — the play-queue drawer opened from the bottom bar.
-
-A frameless right-side drawer overlaying the content area, sitting flush on
-top of the footer bar.  Each queue entry shows its cover, title and artist,
-plus an animated "now playing" indicator on the active row.
-
-Panel layout (top → bottom):
-  - Header: 「播放队列」 title · ⇅ edit/sort (edit mode) · 🗑 clear queue
-  - Count row: ♪ 共N首歌曲 (green note)
-  - Toolbar: 导入歌单 · ◎ 定位 · search box
-  - Scrollable queue list (thin grey separators between rows)
-
-Edit mode (⇅) reveals per-row actions: − remove / ＋ insert next / … info.
-Covers are extracted on a background thread so a large queue opens snappy.
-"""
+"""Frameless right-side drawer listing the play queue."""
 
 from __future__ import annotations
 
@@ -132,11 +118,7 @@ class _PlayingIndicator(QWidget):
 
 
 class _QueueRow(QWidget):
-    """One queue entry: cover · title(+playing indicator)/artist · duration.
-
-    Clicking anywhere plays that song.  In edit mode three action buttons
-    appear on the right: − remove / ＋ insert next / … song info.
-    """
+    """One queue entry: cover · title/artist · duration."""
 
     COVER = 40
 
@@ -152,21 +134,18 @@ class _QueueRow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("current", is_current)
-        # Fixed row height so the panel can virtualize (map scroll px ↔ row).
-        self.setFixedHeight(self.COVER + 14)  # 40 cover + 7+7 margins
+        self.setFixedHeight(self.COVER + 14)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 7, 8, 7)
         lay.setSpacing(10)
 
-        # ── Cover ──
         self._cover = QLabel()
         self._cover.setObjectName("queueCover")
         self._cover.setFixedSize(self.COVER, self.COVER)
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self._cover)
 
-        # ── Text column: title row + artist ──
         col = QVBoxLayout()
         col.setSpacing(1)
         col.addStretch(1)
@@ -198,7 +177,6 @@ class _QueueRow(QWidget):
         col.addStretch(1)
         lay.addLayout(col, stretch=1)
 
-        # ── Duration ──
         dur = song.get("duration", 0)
         mins = int(dur // 60) if dur and dur > 0 else 0
         secs = int(dur % 60) if dur and dur > 0 else 0
@@ -210,7 +188,6 @@ class _QueueRow(QWidget):
         )
         lay.addWidget(self._dur_label)
 
-        # ── Edit-mode actions (hidden until edit mode is on) ──
         self._edit_btns: list[QPushButton] = []
         for text, tip, handler in (
             ("−", "从播放列表移除", self._on_remove),
@@ -227,26 +204,17 @@ class _QueueRow(QWidget):
                 "QPushButton:hover { color: #f58ea8; }"
             )
             btn.clicked.connect(handler)
-            # Keep the buttons hidden during construction: showing an
-            # unparented widget is ~15ms each (Qt styles orphaned widgets
-            # slowly), which adds ~45ms per row in edit mode.  The row is
-            # shown only *after* being inserted into the layout, where
-            # ``set_edit_mode`` shows the buttons at ~0.1ms.
             btn.setVisible(False)
             self._edit_btns.append(btn)
             lay.addWidget(btn)
 
-        # Click anywhere on the row (except the buttons) plays the song.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-    # ── Public helpers ────────────────────────────────────────
 
     def set_current(self, is_current: bool) -> None:
         """Update the now-playing highlight + indicator."""
         if self.property("current") == is_current:
             return
         self.setProperty("current", is_current)
-        # Repolish so the QSS current/hover selector applies.
         self.style().unpolish(self)
         self.style().polish(self)
         _bg, _fg, theme, _dark = get_theme_colors()
@@ -276,14 +244,10 @@ class _QueueRow(QWidget):
         pix = pix.copy(x, y, self.COVER, self.COVER)
         self._cover.setPixmap(pix)
 
-    # ── Events ────────────────────────────────────────────────
-
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._on_play()
         super().mousePressEvent(event)
-
-    # ── Actions ───────────────────────────────────────────────
 
     def _on_play(self) -> None:
         self._panel.play_index(self._index)
@@ -299,11 +263,7 @@ class _QueueRow(QWidget):
 
 
 class _CoverLoader(QThread):
-    """Background cover extractor.
-
-    Paths are fed in from the panel and processed one at a time; the result
-    (a pure QImage — safe to pass across threads) is emitted on completion.
-    """
+    """Background cover extractor emitting a QImage per queued path."""
 
     cover_loaded = pyqtSignal(str, QImage)
 
@@ -354,13 +314,9 @@ class PlaylistPanel(QWidget):
         super().__init__(main_window)
         self._mw = main_window
         self.edit_mode = False
-        # Only the rows in (and near) the viewport are instantiated — the queue
-        # can hold hundreds of songs and eager-building them all freezes the UI
-        # for seconds. _rows maps display position -> row widget; positions far
-        # outside the viewport are dropped and re-created lazily on scroll.
         self._rows: dict[int, _QueueRow] = {}
-        self._filtered_indices: list[int] = []  # display order -> queue index
-        self._row_h = _QueueRow.COVER + 14  # fixed row height (see _QueueRow)
+        self._filtered_indices: list[int] = []
+        self._row_h = _QueueRow.COVER + 14
         self._updating = False
         self._cover_cache: dict[str, QImage] = {}
         self._cover_pending: set[str] = set()
@@ -373,24 +329,19 @@ class PlaylistPanel(QWidget):
 
         self._build_ui()
 
-        # Background cover extraction (kept alive for the panel's lifetime).
         self._cover_loader = _CoverLoader(self)
         self._cover_loader.cover_loaded.connect(self._on_cover_loaded)
         self._cover_loader.start()
 
-        # Live refresh from the queue.
         self._mw.playlist.queue_changed.connect(self._rebuild)
         self._mw.playlist.current_changed.connect(self._refresh_current)
         self._rebuild()
-
-    # ── UI construction ───────────────────────────────────────
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Header: title + edit/sort + clear ──
         header = QWidget()
         header.setObjectName("queueHeader")
         header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -420,7 +371,6 @@ class PlaylistPanel(QWidget):
 
         root.addWidget(header)
 
-        # ── Count row: ♪ 共N首歌曲 ──
         count_row = QWidget()
         cl = QHBoxLayout(count_row)
         cl.setContentsMargins(16, 8, 16, 2)
@@ -430,7 +380,6 @@ class PlaylistPanel(QWidget):
         cl.addStretch()
         root.addWidget(count_row)
 
-        # ── Toolbar: import + locate + search ──
         toolbar = QWidget()
         tl = QHBoxLayout(toolbar)
         tl.setContentsMargins(16, 4, 16, 8)
@@ -454,13 +403,11 @@ class PlaylistPanel(QWidget):
         tl.addWidget(self._search, stretch=1)
         root.addWidget(toolbar)
 
-        # ── Empty hint ──
         self._empty = QLabel("播放列表为空\n在「歌单」页扫描文件夹后，右键歌曲即可导入")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setStyleSheet("font-size: 13px; color: gray; padding: 40px;")
         root.addWidget(self._empty)
 
-        # ── Scrollable queue (virtualized: only visible rows exist) ──
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -469,16 +416,12 @@ class PlaylistPanel(QWidget):
         self._rows_layout = QVBoxLayout(self._rows_container)
         self._rows_layout.setContentsMargins(6, 4, 6, 4)
         self._rows_layout.setSpacing(0)
-        # The top spacer offsets the laid-out rows by the scrolled-away amount;
-        # the trailing stretch keeps the visible block top-aligned.
         self._top_spacer = QWidget()
         self._rows_layout.addWidget(self._top_spacer)
         self._rows_layout.addStretch()
         self._scroll.setWidget(self._rows_container)
         self._scroll.verticalScrollBar().valueChanged.connect(self._update_visible_rows)
         root.addWidget(self._scroll, stretch=1)
-
-    # ── Drawer open/close + positioning ───────────────────────
 
     def open_drawer(self) -> None:
         """Slide in from the right edge, flush above the footer bar."""
@@ -489,8 +432,6 @@ class PlaylistPanel(QWidget):
         self.show()
         self.raise_()
         self.setFocus()
-        # The viewport has its real size only after layout — rebuild the
-        # visible window now (and on every resize) so rows fill the drawer.
         QTimer.singleShot(0, self._update_visible_rows)
         self._animate_to(start, target, 200, QEasingCurve.Type.OutCubic)
 
@@ -505,13 +446,10 @@ class PlaylistPanel(QWidget):
     def _after_close(self) -> None:
         self.hide()
         self._closing = False
-        # The ☰ button reflects the panel's visible state — re-sync it now
-        # that the drawer is finally hidden.
         self._mw._sync_playlist_btn()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        # The viewport grew/shrunk — refresh the visible row window.
         self._update_visible_rows()
 
     def _stop_anim(self) -> None:
@@ -537,27 +475,8 @@ class PlaylistPanel(QWidget):
         self._stop_anim()
         self._cover_loader.stop_and_wait()
 
-    # ── Rebuild / refresh ─────────────────────────────────────
-
     def _rebuild(self, reset_scroll: bool = False) -> None:
-        """Refresh the list view from the queue (only visible rows are built).
-
-        *reset_scroll* only for search edits — everything else (including
-       切歌, which never calls this at all) must keep the user's scroll
-        position where it was, otherwise they lose their place in a long
-        queue and have to hit 「◎ 定位」 to find the current song again.
-
-        The queue is just data (a list + a playing pointer — exactly like the
-        歌单 page).  Rebuilding here must never construct hundreds of row
-        widgets on the main thread: that is what froze the UI for seconds and
-        left the phantom "corner" window behind.  We only remember *which*
-        queue indices the filter allows (``_filtered_indices``) and let
-        :meth:`_update_visible_rows` instantiate the handful near the viewport.
-        """
-        # Deleting a row while one of its buttons/labels still has an active
-        # tooltip orphans the tooltip window (a phantom QLabel keeps popping
-        # up and blocks mouse input near the drawer's right edge). Hide any
-        # tooltip first so the rebuild can never leave one behind.
+        """Refresh the list view from the queue, building only the visible rows."""
         QToolTip.hideText()
         for row in list(self._rows.values()):
             self._rows_layout.removeWidget(row)
@@ -574,16 +493,11 @@ class PlaylistPanel(QWidget):
         self._import_btn.setEnabled(True)
         self._locate_btn.setEnabled(has_queue)
 
-        # Drop cached covers for paths no longer in the queue.
         paths = {s.get("path") for s in queue}
         for p in list(self._cover_cache):
             if p not in paths:
                 del self._cover_cache[p]
 
-        # Anchor the view to the row currently at the top of the viewport so
-        # +/− (add/remove) edits keep the user's place instead of jumping the
-        # list back to the top — that reset is why they had to hit 「◎ 定位」 to
-        # find the current song again.  Only a fresh search resets to the top.
         sb = self._scroll.verticalScrollBar()
         anchor_qidx: int | None = None
         anchor_frac = 0
@@ -593,14 +507,11 @@ class PlaylistPanel(QWidget):
                 anchor_qidx = self._filtered_indices[disp]
                 anchor_frac = sb.value() % self._row_h
 
-        # Display order (after the search filter) -> queue index.
         self._filtered_indices = [
             i for i, song in enumerate(queue)
             if not text or text in self._haystack(song)
         ]
 
-        # Size the container to the full list so the scrollbar spans every
-        # row, then restore the view (or top it for a fresh search).
         n = len(self._filtered_indices)
         self._rows_container.setMinimumHeight(n * self._row_h)
         target = 0
@@ -608,21 +519,14 @@ class PlaylistPanel(QWidget):
             try:
                 new_disp = self._filtered_indices.index(anchor_qidx)
             except ValueError:
-                new_disp = 0  # the anchored row was removed — start at top
+                new_disp = 0
             target = new_disp * self._row_h + anchor_frac
-        # setValue clamps to the current range; Qt recomputes the true range
-        # on the next layout pass, which is fine — the value is always inside it.
         sb.setValue(target)
         self._update_visible_rows()
         self._update_count()
 
     def _update_visible_rows(self, *_args) -> None:
-        """Create/destroy rows so only those in (or near) the viewport exist.
-
-        Called on every scrollbar move and after a rebuild.  Rows are laid out
-        in display order after a top spacer whose height equals the number of
-        scrolled-away rows, so the scrollbar offset maps 1:1 to visible rows.
-        """
+        """Create/destroy rows so only those in (or near) the viewport exist."""
         if self._updating:
             return
         self._updating = True
@@ -639,19 +543,16 @@ class PlaylistPanel(QWidget):
             view_h = self._scroll.viewport().height()
             first = max(0, sb.value() // self._row_h)
             last = min(n - 1, (sb.value() + view_h) // self._row_h)
-            first = max(0, first - 4)   # small buffer above
-            last = min(n - 1, last + 4)  # and below for smooth scrolling
+            first = max(0, first - 4)
+            last = min(n - 1, last + 4)
 
-            # Detach every row from the layout (widgets stay alive).
             for row in self._rows.values():
                 self._rows_layout.removeWidget(row)
 
-            # Destroy rows outside the window.
             for d in [d for d in self._rows if not (first <= d <= last)]:
                 row = self._rows.pop(d)
                 row.deleteLater()
 
-            # Instantiate missing rows inside the window.
             queue = self._mw.playlist.queue
             current = self._mw.playlist.current_index
             new_rows: list[_QueueRow] = []
@@ -665,19 +566,15 @@ class PlaylistPanel(QWidget):
                 new_rows.append(row)
                 self._request_cover(song.get("path"), row)
 
-            # Re-attach rows in ascending order, after the top spacer.
             insert_at = 1
             for d in sorted(self._rows):
                 if first <= d <= last:
                     self._rows_layout.insertWidget(insert_at, self._rows[d])
                     insert_at += 1
 
-            # Reveal edit-mode buttons only once the row is parented (showing
-            # an orphaned widget is ~15ms/button, ~45ms/row; here it's ~0.1ms).
             for row in new_rows:
                 row.set_edit_mode(self.edit_mode)
 
-            # Offset the laid-out rows by the scrolled-away amount.
             self._top_spacer.setFixedHeight(first * self._row_h)
         finally:
             self._updating = False
@@ -702,8 +599,6 @@ class PlaylistPanel(QWidget):
             str(song.get(k, "")) for k in ("title", "artist", "path")
         ).lower()
 
-    # ── Cover loading ─────────────────────────────────────────
-
     def _request_cover(self, path: str, row: _QueueRow) -> None:
         img = self._cover_cache.get(path)
         if img is not None:
@@ -719,8 +614,6 @@ class PlaylistPanel(QWidget):
         for row in self._rows.values():
             if row._song.get("path") == path:
                 row.set_cover(img)
-
-    # ── Header handlers ───────────────────────────────────────
 
     def _toggle_edit_mode(self) -> None:
         self.edit_mode = not self.edit_mode
@@ -742,32 +635,19 @@ class PlaylistPanel(QWidget):
         if ret == QMessageBox.StandardButton.Yes:
             self._mw.playlist.clear()
 
-    # ── Search ────────────────────────────────────────────────
-
     def _on_search_changed(self, _text: str) -> None:
-        # A new search shows a fresh result list from the top; every other
-        # rebuild (e.g. +/− edits) keeps the current scroll anchor instead.
         self._rebuild(reset_scroll=True)
 
-    # ── Locate now-playing entry ──────────────────────────────
-
     def _locate_current(self, scroll: bool = True) -> bool:
-        """Scroll to the now-playing queue entry.  Returns True when found.
-
-        Uses the display-position map (not row widgets) so the target needs no
-        row to exist yet — scrolling there makes ``_update_visible_rows`` build
-        it.  If the entry is hidden by the search box, the search is cleared
-        first so the song is reachable again.
-        """
+        """Scroll to the now-playing queue entry; returns True when found."""
         current = self._mw.playlist.current_index
         try:
             disp = self._filtered_indices.index(current)
         except ValueError:
             if not self._search.text().strip():
                 return False
-            # filtered out by search — clear it so the entry is reachable
             self._search.clear()
-            QApplication.processEvents()  # let _rebuild recompute indices
+            QApplication.processEvents()
             try:
                 disp = self._filtered_indices.index(current)
             except ValueError:
@@ -780,8 +660,6 @@ class PlaylistPanel(QWidget):
     def _on_locate(self) -> None:
         if not self._locate_current():
             print("播放列表中没有正在播放的歌曲")
-
-    # ── Import menu ───────────────────────────────────────────
 
     def _on_import_menu(self) -> None:
         """Open a menu: import the whole library or any folder (any depth)."""
@@ -820,8 +698,6 @@ class PlaylistPanel(QWidget):
         self._mw.import_to_playlist(songs)
         print(f"已导入 {len(songs)} 首到播放列表")
 
-    # ── Queue actions ─────────────────────────────────────────
-
     def play_index(self, index: int) -> None:
         self._mw.playlist.play_index(index)
 
@@ -836,8 +712,6 @@ class PlaylistPanel(QWidget):
         if 0 <= index < len(queue):
             from .song_info_dialog import SongInfoDialog
             SongInfoDialog(self._mw, queue[index], self).exec()
-
-    # ── Keys ──────────────────────────────────────────────────
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:

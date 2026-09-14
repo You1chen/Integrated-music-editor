@@ -1,8 +1,4 @@
-"""Audio manager — wraps QMediaPlayer, replaces audiomodule.ts + audioRef.
-
-Provides property accessors matching the web app's audioRef API and
-pyqtSignals replacing the PubSub pattern.
-"""
+"""Audio manager — wraps QMediaPlayer to provide the app's audio playback."""
 
 from __future__ import annotations
 
@@ -24,7 +20,7 @@ from .lrc_parser import guard
 
 
 class AudioState(IntEnum):
-    """Types of audio state changes (mirrors web AudioActionType)."""
+    """Types of audio state change notifications."""
     PAUSE_CHANGED = 0
     DURATION_LOADED = 1
     RATE_CHANGED = 2
@@ -38,13 +34,7 @@ class AudioStateData:
 
 
 def extract_embedded_cover_image(path: str):
-    """Read embedded cover art from *path* and return a QImage (or None).
-
-    Mirrors the mutagen branch of :meth:`AudioManager.cover_image` but works
-    for any file path (not just the currently-loaded one), and is safe to
-    call from a worker thread (only value types like QImage are produced,
-    no GUI objects involved).
-    """
+    """Read embedded cover art from *path* and return a QImage, or None."""
     if not path:
         return None
     try:
@@ -56,14 +46,12 @@ def extract_embedded_cover_image(path: str):
         if audio is None:
             return None
         tags = getattr(audio, "tags", None)
-        # ID3 (MP3)
         if isinstance(tags, ID3):
             apic = tags.getall("APIC")
             if apic:
                 img = QImage.fromData(apic[0].data)
                 if not img.isNull():
                     return img
-        # FLAC / Ogg native pictures
         pics = getattr(audio, "pictures", None)
         if pics:
             img = QImage.fromData(pics[0].data)
@@ -75,10 +63,7 @@ def extract_embedded_cover_image(path: str):
 
 
 class AudioManager(QObject):
-    """QMediaPlayer wrapper providing the same API as the web audioRef.
-
-    Signals replace the PubSub pattern (currentTimePubSub, audioStatePubSub).
-    """
+    """QMediaPlayer wrapper providing the app's audio API."""
 
     current_time_changed = pyqtSignal(float)
     state_changed = pyqtSignal(AudioStateData)
@@ -88,7 +73,7 @@ class AudioManager(QObject):
     media_ended = pyqtSignal()
 
     _MS_TO_SEC = 0.001
-    _TIMER_INTERVAL = 16  # ~60fps, matches requestAnimationFrame
+    _TIMER_INTERVAL = 16
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -97,20 +82,16 @@ class AudioManager(QObject):
         self._output = QAudioOutput()
         self._player.setAudioOutput(self._output)
 
-        # Timer for ~60fps current time updates during playback
         self._timer = QTimer()
         self._timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._emit_current_time)
 
-        # Connect QMediaPlayer signals
         self._player.positionChanged.connect(self._on_position_changed)
         self._player.durationChanged.connect(self._on_duration_changed)
         self._player.playbackStateChanged.connect(self._on_playback_state_changed)
         self._player.errorOccurred.connect(self._on_error)
         self._player.metaDataChanged.connect(self.meta_data_changed.emit)
         self._player.mediaStatusChanged.connect(self._on_media_status_changed)
-
-    # ── Property Accessors (match audioRef API) ────────────────
 
     @property
     def src(self) -> str:
@@ -119,8 +100,7 @@ class AudioManager(QObject):
 
     @property
     def local_path(self) -> str:
-        """Get the current audio source as a local file path (empty if
-        no audio is loaded or the source is not a local file)."""
+        """Get the current audio source as a local file path, or an empty string."""
         src = self.src
         if not src:
             return ""
@@ -182,8 +162,6 @@ class AudioManager(QObject):
         """Mute / unmute the output."""
         self._output.setMuted(bool(value))
 
-    # ── Playback Control ───────────────────────────────────────
-
     def toggle(self) -> None:
         """Toggle between play and pause."""
         if self._player.duration() > 0:
@@ -193,40 +171,27 @@ class AudioManager(QObject):
                 self._player.pause()
 
     def play(self) -> None:
-        """Start playback (no toggle — used for autoplay after loading)."""
+        """Start playback without toggling."""
         if self._player.duration() > 0:
             self._player.play()
 
     def restart(self) -> None:
-        """Rewind to the start and play (used by single-loop / shuffle)."""
+        """Rewind to the start and play."""
         if self._player.duration() > 0:
             self._player.setPosition(0)
             self._player.play()
 
     def step(self, modifiers: Any, offset: float, target: Optional[float] = None) -> float:
-        """Adjust playback position with modifier support.
-
-        Ports audioRef.step() — supports Alt (×0.2) and Shift (×0.5) modifiers.
-
-        Args:
-            modifiers: Qt.KeyboardModifier flags or a dict with altKey/shiftKey.
-            offset: Base offset amount (e.g., -5 or +5).
-            target: Target position; defaults to current time.
-
-        Returns:
-            New current time after the step.
-        """
+        """Adjust playback position with Alt (×0.2) and Shift (×0.5) modifiers."""
         if target is None:
             target = self.current_time
 
-        # Handle both Qt modifiers and dict-like modifiers
         alt = False
         shift = False
         if isinstance(modifiers, dict):
             alt = bool(modifiers.get('altKey', False))
             shift = bool(modifiers.get('shiftKey', False))
         else:
-            # PyQt6 Qt.KeyboardModifier flags — supports & directly
             alt = bool(modifiers & Qt.KeyboardModifier.AltModifier)
             shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
 
@@ -246,12 +211,7 @@ class AudioManager(QObject):
 
     @property
     def cover_image(self):
-        """Try to extract embedded cover art from audio metadata.
-
-        Returns a QPixmap on success, or None when no cover is embedded.
-        Safe to call from any thread — catches all exceptions internally.
-        """
-        # 1) Qt multimedia metadata (CoverArtImage / ThumbnailImage).
+        """Return a QPixmap of the embedded cover art, or None when absent."""
         try:
             from PyQt6.QtMultimedia import QMediaMetaData
             meta = self._player.metaData()
@@ -266,22 +226,16 @@ class AudioManager(QObject):
         except Exception:
             pass
 
-        # 2) mutagen fallback — Qt's FFmpeg backend often leaves
-        #    CoverArtImage empty even when the file embeds a cover.
         img = extract_embedded_cover_image(self.local_path)
         if img is not None:
             from PyQt6.QtGui import QPixmap
             return QPixmap.fromImage(img)
         return None
 
-    # ── Internal Signal Handlers ───────────────────────────────
-
     def _emit_current_time(self) -> None:
         self.current_time_changed.emit(self.current_time)
 
     def _on_position_changed(self, _position: int) -> None:
-        # Position changes handled by timer during playback;
-        # emit once when paused (e.g., user seeking)
         if self.paused:
             self.current_time_changed.emit(self.current_time)
 
@@ -313,7 +267,6 @@ class AudioManager(QObject):
             ))
 
     def _on_error(self, error: QMediaPlayer.Error, error_string: str) -> None:
-        # Map error codes to user-friendly messages (matching web app)
         error_messages = {
             QMediaPlayer.Error.ResourceError: "音频资源错误",
             QMediaPlayer.Error.FormatError: "不支持的音频格式",

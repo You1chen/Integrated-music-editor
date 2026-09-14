@@ -31,13 +31,8 @@ from .toast_overlay import ToastOverlay
 
 
 class MainWindow(QMainWindow):
-    """Top-level application window.
+    """Top-level application window that wires shared state and signals."""
 
-    Orchestrates all shared state and connects signals between components.
-    """
-
-    # Like-state changes (path, liked) — lets every AudioControls instance
-    # (footer + expanded editor) stay in sync when one of them toggles a like.
     liked_changed = pyqtSignal(str, bool)
 
     def __init__(self) -> None:
@@ -46,7 +41,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("集成歌曲编辑器")
         self.setMinimumSize(800, 500)
 
-        # ── Shared State Objects ────────────────────────────
         self.config = ConfigManager()
         self.lrc_state = LrcStateManager(self)
         self.audio_manager = AudioManager(self)
@@ -55,40 +49,24 @@ class MainWindow(QMainWindow):
         )
         self.playlist = PlaylistManager(self.audio_manager, self.config, self)
 
-        # Playback-mode lock for the lyrics-editing page.
         self._sync_active = False
         self._saved_play_mode: PlayMode = PlayMode.SINGLE
         self._playlist_panel = None
 
-        # Lyrics-axis visibility (home page) — single source of truth so the
-        # footer and expanded-editor toggles never diverge.
         self._lyric_axis_visible = True
 
-        # Guard against _save_state re-creating draft during close
         self._closing = False
-        # Guard against _save_state during initial draft/file restoration
         self._restoring_draft = False
-        # Track which audio last triggered _try_load_matching_lrc
-        # (used to detect audio switches and clear stale lyrics)
         self._last_audio_for_lrc: str = ""
 
-        # ── Preference application debounce ──────────────────────
-        # Every preference tweak (spinbox drag, checkbox toggle) calls
-        # update_preferences() which rebuilds the app-wide QSS and
-        # re-polishes every widget.  Coalesce rapid changes into one
-        # application so the settings page stays smooth.  (Disk write
-        # and format options apply immediately — only the theme QSS
-        # rebuild is debounced.)
         self._pending_theme: dict | None = None
         self._prefs_debounce = QTimer(self)
         self._prefs_debounce.setSingleShot(True)
         self._prefs_debounce.setInterval(150)
         self._prefs_debounce.timeout.connect(self._apply_pending_theme)
 
-        # Load saved preferences
         prefs = self.config.get_preferences()
 
-        # Trim options for parsing
         space_start = prefs.get("spaceStart", 1)
         space_end = prefs.get("spaceEnd", 0)
         self._trim_options = TrimOptions(
@@ -96,7 +74,6 @@ class MainWindow(QMainWindow):
             trim_end=space_end >= 0,
         )
 
-        # Format options for stringify
         self._format_options = FormatOptions(
             space_start=space_start,
             space_end=space_end,
@@ -105,33 +82,25 @@ class MainWindow(QMainWindow):
         )
         self.lrc_state.update_format_options(self._format_options)
 
-        # ── Build UI ────────────────────────────────────────
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header
         self.header_bar = HeaderBar()
         layout.addWidget(self.header_bar)
 
-        # Content stack (pages)
         self.content_stack = ContentStack(self)
         layout.addWidget(self.content_stack, stretch=1)
 
-        # Footer (audio controls)
         self.footer_bar = FooterBar(self)
         layout.addWidget(self.footer_bar)
 
-        # Toast overlay (positioned absolutely at top-right) — used by the
-        # lyrics editor and the metadata editor for visible feedback.
         self.toast_overlay = ToastOverlay(self)
 
-        # ── Conect Signals ──────────────────────────────────
         self._connect_signals()
 
-        # ── Load saved draft (consume it — read then delete) ──
         self._restoring_draft = True
         if self.config.get_remember_draft():
             saved_lyric = self.config.get_lyric()
@@ -141,9 +110,8 @@ class MainWindow(QMainWindow):
                     options=self._trim_options,
                     select=self.config.get_select_index(),
                 )
-            self.config.delete_draft()  # consumed — won't exist again until exit
+            self.config.delete_draft()
 
-        # Restore audio source: last path takes priority (if remember enabled)
         if self.config.get_remember_last_mp3():
             last_mp3 = self.config.get_last_mp3_path()
             if last_mp3:
@@ -156,7 +124,6 @@ class MainWindow(QMainWindow):
             if saved_src:
                 self.audio_manager.set_source(saved_src)
 
-        # Restore last LRC file
         if self.config.get_remember_last_lrc():
             last_lrc = self.config.get_last_lrc_path()
             if last_lrc:
@@ -170,45 +137,25 @@ class MainWindow(QMainWindow):
                             select=self.config.get_select_index(),
                         )
                     except Exception:
-                        pass  # Silently fail if file can't be loaded
+                        pass
 
         self._restoring_draft = False
 
-        # Show home page by default
         self.content_stack.set_page(PageRoute.HOME)
 
-        # Welcome dialog on startup (skipped when disabled in preferences)
         if self.config.get_show_welcome():
             QTimer.singleShot(400, self._show_welcome_dialog)
 
-        # ── Install app-wide event filter for keyboard shortcuts ──
-        # Must be on QApplication (not self) so that key events are
-        # intercepted BEFORE they reach the focused child widget.
-        # This way Space → timestamp always works when a lyric is
-        # selected, even if focus is on the play button or elsewhere.
         app_instance = QApplication.instance()
         if app_instance:
             app_instance.installEventFilter(self)
 
-    # ── Event Filter (global keyboard) ──────────────────────
 
     def eventFilter(self, obj, event):
-        """App-wide event filter: routes keyboard events.
-
-        When a lyric line is selected on the synchronizer page:
-        - Space (SYNC) always timestamps — never toggles play/pause
-        - Audio shortcuts (seek, rate, toggle) are blocked entirely
-        Other key events fall through to handle_global_key.
-
-        Keyboard shortcuts are suppressed when a text-input widget has
-        focus so that dialogs (like pattern-match / AI assist) receive
-        normal text input.
-        """
+        """App-wide event filter that routes keyboard events."""
         if event.type() != QEvent.Type.KeyPress:
             return super().eventFilter(obj, event)
 
-        # ── High priority: TOGGLE_PLAY (Ctrl+Enter) must work even while
-        #    editing lyrics in a text field (input box, inline edit, …).
         if (
             self.keybinding_manager.get_matched_action(event)
             == InputAction.TOGGLE_PLAY
@@ -217,8 +164,6 @@ class MainWindow(QMainWindow):
                 self.audio_manager.toggle()
                 return True
 
-        # ── Esc closes the playlist drawer (not while a modal dialog or a
-        #    popup menu like the import menu has grabbed input) ──
         if (
             event.key() == Qt.Key.Key_Escape
             and self._playlist_panel is not None
@@ -229,14 +174,12 @@ class MainWindow(QMainWindow):
             self.close_playlist_panel()
             return True
 
-        # ── Don't steal keys from text-input widgets ──
         focus_widget = QApplication.focusWidget()
         if focus_widget is not None and isinstance(
             focus_widget, (QLineEdit, QPlainTextEdit, QTextEdit)
         ):
             return super().eventFilter(obj, event)
 
-        # ── Intercept when a lyric is selected on the sync page ──
         sync_page = self.content_stack._pages.get(PageRoute.SYNCHRONIZER)
         has_selection = (
             self.lrc_state.select_index != -1
@@ -253,16 +196,11 @@ class MainWindow(QMainWindow):
             shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             action = self.keybinding_manager.get_matched_action(event)
 
-            # ── Shift held → playback mode (even when lyrics selected) ──
             if shift:
                 if action == InputAction.SYNC:
                     self.audio_manager.toggle()
                     return True
-                # Other audio shortcuts (seek, rate, …) fall
-                # through to handle_global_key below
             else:
-                # ── No Shift → synchronizer mode ──────────────
-                # Left / Right arrows → jump to prev / next timestamp
                 if action == InputAction.SEEK_BACKWARD and event.key() == Qt.Key.Key_Left:
                     sync_page._on_jump_prev_timestamp()
                     return True
@@ -270,7 +208,6 @@ class MainWindow(QMainWindow):
                     sync_page._on_jump_next_timestamp()
                     return True
 
-                # Block audio shortcuts
                 if action in (
                     InputAction.SEEK_BACKWARD,
                     InputAction.SEEK_FORWARD,
@@ -283,27 +220,17 @@ class MainWindow(QMainWindow):
                 ):
                     return True
 
-                # Space → timestamp
                 if action == InputAction.SYNC:
                     sync_page._on_sync()
                     return True
 
-        # Fall through to normal global-key handling
         if self.handle_global_key(event):
             return True
         return super().eventFilter(obj, event)
 
-    # ── Close Event (draft handling) ────────────────────────
 
     def closeEvent(self, event) -> None:
-        """Handle draft lifecycle on window close.
-
-        - If ``overwriteSourceOnExit``: overwrite the source LRC file.
-        - If ``rememberDraft``: write one draft to AppData/draft.lrc.
-        The draft is read back on next launch and immediately deleted.
-        """
-        # Stop background threads (drawer cover loader + waveform decoder)
-        # so Qt exits cleanly.
+        """Handle draft lifecycle on window close."""
         if self._playlist_panel is not None:
             self._playlist_panel.shutdown()
         waveform = getattr(self.footer_bar.audio_controls, "_waveform", None)
@@ -326,19 +253,14 @@ class MainWindow(QMainWindow):
         self._closing = True
         super().closeEvent(event)
 
-    # ── App-level keyboard handler ──────────────────────────
 
     def handle_global_key(self, event: QKeyEvent) -> bool:
-        """Handle keyboard events globally.
-
-        Returns True if the event was handled.
-        """
+        """Handle keyboard events globally; returns True if handled."""
         action = self.keybinding_manager.get_matched_action(event)
 
         if action is None:
             return False
 
-        # Audio source must be set for audio actions
         if action in (
             InputAction.SEEK_BACKWARD,
             InputAction.SEEK_FORWARD,
@@ -351,9 +273,6 @@ class MainWindow(QMainWindow):
             if not self.audio_manager.src:
                 return False
 
-        # Rate uses log scale from web app: playbackRate ∈ [1/e, e]
-        # rate_slider_value = ln(playbackRate)
-        # playbackRate = exp(rate_slider_value)
 
         rate = self.audio_manager.playback_rate
 
@@ -392,28 +311,21 @@ class MainWindow(QMainWindow):
             self.playlist.next()
             return True
         elif action == InputAction.SYNC:
-            # Space → play/pause globally (overridden by timestamp
-            # when a lyric is selected on the synchronizer page)
             self.audio_manager.toggle()
             return True
         elif action == InputAction.SHOW_HELP:
             self._show_help_dialog()
             return True
         elif action == InputAction.UNDO:
-            # On the preferences page, undo preference changes instead
             if self.content_stack.currentIndex() == PageRoute.PREFERENCES:
                 prefs_page = self.content_stack._pages.get(PageRoute.PREFERENCES)
                 if prefs_page is not None and prefs_page.undo():
                     return True
-            # Snapshot timestamps so we can detect a sync / set_time undo
             pre_count = len(self.lrc_state.lyric)
             pre_times = [line.time for line in self.lrc_state.lyric]
 
             self.lrc_state.undo()
 
-            # When the line count is unchanged and a timestamp was
-            # removed or changed, seek the audio back so the user can
-            # re-listen and re-stamp straight away.
             if len(self.lrc_state.lyric) == pre_count:
                 seek_secs = float(
                     self.config.get_preferences().get("undoSeekBackSeconds", 3.0)
@@ -430,7 +342,6 @@ class MainWindow(QMainWindow):
 
             return True
         elif action == InputAction.REDO:
-            # On the preferences page, redo preference changes instead
             if self.content_stack.currentIndex() == PageRoute.PREFERENCES:
                 prefs_page = self.content_stack._pages.get(PageRoute.PREFERENCES)
                 if prefs_page is not None and prefs_page.redo():
@@ -440,25 +351,19 @@ class MainWindow(QMainWindow):
 
         return False
 
-    # ── Signal Wiring ───────────────────────────────────────
 
     def _connect_signals(self) -> None:
-        # Header navigation
         self.header_bar.page_requested.connect(self.content_stack.set_page)
         self.header_bar.help_requested.connect(self._show_help_dialog)
 
-        # Audio manager -> footer + lrc_state
         self.audio_manager.state_changed.connect(self._on_audio_state_changed)
         self.audio_manager.error_occurred.connect(self._on_audio_error)
         self.audio_manager.duration_changed.connect(self._on_duration_loaded)
 
-        # LRC state changes -> select-index persistence only
         self.lrc_state.state_changed.connect(self._save_select_index)
 
-        # Content stack notifies when synchronizer page is shown/hidden
         self.content_stack.sync_page_active_changed.connect(self._on_sync_page_changed)
 
-        # Play mode → footer mode label
         self.playlist.mode_changed.connect(self._on_play_mode_changed)
 
     def _on_audio_state_changed(self, data: AudioStateData) -> None:
@@ -476,15 +381,12 @@ class MainWindow(QMainWindow):
             )
             print("音频已载入")
         except Exception:
-            pass  # Prevent crash during audio metadata update
+            pass
 
-        # ── Auto-load same-name LRC ───────────────────────────
         self._try_load_matching_lrc()
 
     def _try_load_matching_lrc(self) -> None:
-        """If a .lrc or .txt file with the same stem as the audio exists
-        in the same directory, load it automatically.
-        """
+        """Load a .lrc or .txt file with the same stem as the audio, if present."""
         src = self.audio_manager.src
         if not src:
             return
@@ -512,40 +414,27 @@ class MainWindow(QMainWindow):
                 print(f"已自动加载同名歌词：{os.path.basename(lrc_path)}")
             except Exception:
                 pass
-            return  # Only load the first match (.lrc preferred over .txt)
+            return
 
-        # No matching LRC found for this audio.
-        # If the audio has changed since the last load, clear the previous
-        # song's lyrics so they don't linger.  We track the audio path
-        # directly rather than relying on lastLrcPath (which may not be
-        # set when rememberLastLrc is off, or when lyrics were manually
-        # entered without a file).
         if previous_audio and previous_audio != path:
             self.lrc_state.init_from_text("", self._trim_options)
-            self.config.set_last_lrc_path("")  # clear stale path too
+            self.config.set_last_lrc_path("")
 
     def _on_sync_page_changed(self, active: bool) -> None:
         if active:
-            # Connect audio time -> lrc refresh
             self.audio_manager.current_time_changed.connect(
                 self.lrc_state.refresh
             )
-            # Lock playback mode to single-play while editing lyrics so a
-            # song can never auto-advance under the user mid-edit.  Position
-            # and rate are untouched — only the end-of-media behaviour is
-            # held to "play this one song and stop".
             self._sync_active = True
             self._saved_play_mode = self.playlist.mode
             self.playlist.set_mode(PlayMode.SINGLE)
         else:
-            # Disconnect when leaving sync page
             try:
                 self.audio_manager.current_time_changed.disconnect(
                     self.lrc_state.refresh
                 )
             except TypeError:
-                pass  # Not connected
-            # Restore the mode the user had before entering the lyrics page.
+                pass
             self._sync_active = False
             self.playlist.set_mode(self._saved_play_mode)
 
@@ -564,36 +453,25 @@ class MainWindow(QMainWindow):
             return
         self.config.set_select_index(self.lrc_state.select_index)
 
-    # ── Play queue / playback-mode API ────────────────────────
 
     def set_play_mode(self, mode: PlayMode) -> None:
-        """Set the playback mode (from the footer mode menu).
-
-        Persisted here — the only user-facing entry point — rather than in
-        ``playlist.set_mode``, so the sync page's temporary SINGLE lock
-        (which calls ``set_mode`` directly) never overwrites the saved mode.
-        """
+        """Set the playback mode and persist it."""
         self.playlist.set_mode(mode)
         self.config.set_last_play_mode(int(mode))
 
-    # ── Lyrics-axis visibility (home page) ───────────────────
 
     def lyric_axis_visible(self) -> bool:
         """Current lyrics-axis visibility on the home page."""
         return self._lyric_axis_visible
 
     def toggle_lyric_axis(self) -> bool:
-        """Flip lyrics-axis visibility and apply it to the home page.
-
-        Returns the new state, so callers can sync their toggle button.
-        """
+        """Flip lyrics-axis visibility on the home page and return the new state."""
         self._lyric_axis_visible = not self._lyric_axis_visible
         home = self.content_stack.widget(PageRoute.HOME)
         if home is not None:
             home.set_lyric_axis_visible(self._lyric_axis_visible)
         return self._lyric_axis_visible
 
-    # ── Play-queue drawer (right-side panel) ──────────────────
 
     def toggle_playlist_panel(self) -> bool:
         """Open or close the queue drawer.  Returns the new visible state."""
@@ -666,17 +544,9 @@ class MainWindow(QMainWindow):
         self.playlist.play_index(0)
         print(f"已导入 {len(songs)} 首到播放列表")
 
-    # ── Public Helpers ──────────────────────────────────────
 
     def _show_welcome_dialog(self) -> None:
-        """Show the welcome guide (non-modal, one-shot, closable).
-
-        Deliberately **non-modal**: a modal ``exec()`` disables the main
-        window on Windows, which leaves ghost shadows / duplicated-text
-        artifacts behind while the dialog is up (parts of the disabled
-        window never repaint).  A modeless top-level dialog lets the
-        main window keep rendering normally, so no artifacts appear.
-        """
+        """Show the non-modal welcome guide dialog."""
         from PyQt6.QtWidgets import (
             QCheckBox,
             QDialog,
@@ -686,7 +556,6 @@ class MainWindow(QMainWindow):
             QVBoxLayout as QVBL,
         )
 
-        # Top-level dialog with NO parent → never disables the main window.
         dlg = QDialog()
         dlg.setWindowTitle("欢迎使用集成歌曲编辑器")
         dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
@@ -694,7 +563,6 @@ class MainWindow(QMainWindow):
         dlg.setMinimumSize(480, 440)
         dlg.resize(520, 480)
 
-        # Center over the main window
         dlg.move(
             self.frameGeometry().center() - dlg.rect().center()
         )
@@ -703,13 +571,11 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(28, 24, 28, 16)
         lay.setSpacing(12)
 
-        # ── Title ──
         title = QLabel("集成歌曲编辑器")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(title)
 
-        # ── Subtitle ──
         sub = QLabel("音频播放 · 歌词制作 · 元信息编辑 · 歌单媒体库")
         sub.setStyleSheet("font-size: 13px; color: gray;")
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -717,7 +583,6 @@ class MainWindow(QMainWindow):
 
         lay.addSpacing(4)
 
-        # ── Steps ──
         for text in [
             "1. 🗂 歌单媒体库：在「歌单」页选择文件夹，扫描成树状歌单",
             "2. 📃 播放列表：把歌单导入播放列表，点击底部右侧☰「播放列表」查看",
@@ -733,7 +598,6 @@ class MainWindow(QMainWindow):
 
         lay.addSpacing(8)
 
-        # ── Quick-jump button ──
         btn_sync = QPushButton("→ 前往歌词制作")
         btn_sync.setStyleSheet(
             "QPushButton { font-size: 15px; padding: 8px 16px; }"
@@ -746,17 +610,14 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
-        # ── "Don't show again" ──
         cb = QCheckBox("启动时不再显示此引导")
         cb.setStyleSheet("font-size: 13px; color: #888888;")
         lay.addWidget(cb)
 
-        # ── Close button ──
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btns.rejected.connect(dlg.close)
         lay.addWidget(btns)
 
-        # Persist "don't show again" when the dialog is dismissed.
         dlg.finished.connect(lambda _: self._on_welcome_closed(cb.isChecked()))
 
         dlg.show()
@@ -798,7 +659,6 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         layout.addWidget(tabs, stretch=1)
 
-        # ── Helper: make a scrollable tab ──
         def _make_tab(title: str) -> tuple[QScrollArea, QVBL]:
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
@@ -821,9 +681,6 @@ class MainWindow(QMainWindow):
             dl.setWordWrap(True)
             lay.addWidget(dl)
 
-        # ══════════════════════════════════════════════════════════
-        # Tab 1: 关于
-        # ══════════════════════════════════════════════════════════
         _, lay_about = _make_tab("关于")
         for text, style in [
             ("集成歌曲编辑器", "font-size: 22px; font-weight: bold;"),
@@ -856,9 +713,6 @@ class MainWindow(QMainWindow):
             lay_about.addWidget(lbl)
         lay_about.addStretch()
 
-        # ══════════════════════════════════════════════════════════
-        # Tab 2: 使用流程
-        # ══════════════════════════════════════════════════════════
         _, lay_flow = _make_tab("使用流程")
         steps = [
             ("① 载入歌曲",
@@ -899,9 +753,6 @@ class MainWindow(QMainWindow):
             _section(lay_flow, title, desc)
         lay_flow.addStretch()
 
-        # ══════════════════════════════════════════════════════════
-        # Tab 3: 歌词编辑
-        # ══════════════════════════════════════════════════════════
         _, lay_edit = _make_tab("歌词编辑")
         edit_sections = [
             ("🖱️ 多选操作",
@@ -939,9 +790,6 @@ class MainWindow(QMainWindow):
             _section(lay_edit, title, desc)
         lay_edit.addStretch()
 
-        # ══════════════════════════════════════════════════════════
-        # Tab 4: 快捷键参考
-        # ══════════════════════════════════════════════════════════
         _, lay_keys = _make_tab("快捷键参考")
         note = QLabel("下面列出了所有默认快捷键，你可以在「设置」页面修改它们。")
         note.setStyleSheet("font-size: 12px; color: gray;")
@@ -971,7 +819,6 @@ class MainWindow(QMainWindow):
                 lay_keys.addLayout(row)
         lay_keys.addStretch()
 
-        # ── Close button ──
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         btn_box.rejected.connect(dialog.reject)
         layout.addWidget(btn_box)
@@ -979,14 +826,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def update_preferences(self, prefs: dict) -> None:
-        """Apply preference changes to all components.
-
-        Cheap parts — disk write and format options — apply immediately
-        so a change is never lost even if the app exits right away.  The
-        expensive part — the app-wide QSS rebuild that re-polishes every
-        widget (slow with large trees like the playlist page) — is
-        debounced into a single application 150ms after the last change.
-        """
+        """Apply preference changes to all components."""
         self.config.set_preferences(prefs)
         self._apply_format_options(prefs)
         self._pending_theme = prefs

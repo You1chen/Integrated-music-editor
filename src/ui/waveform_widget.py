@@ -1,13 +1,4 @@
-"""Waveform widget — custom QPainter audio waveform visualization (replaces wavesurfer.js).
-
-Draws waveform from decoded audio samples using numpy + soundfile.
-
-Decoding runs on a background worker thread, so switching songs never blocks
-the GUI. (Previously the whole file was decoded on the main thread on every
-切歌, freezing the UI for up to ~1.5s per song.) A small LRU cache makes
-revisiting a recently-played song instant, and the envelope is decoded at a
-fixed resolution so resize never needs a re-decode.
-"""
+"""Custom QPainter audio waveform widget with background envelope decoding."""
 
 from __future__ import annotations
 
@@ -38,21 +29,13 @@ from .content_stack import get_theme_colors
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-# Peak-envelope resolution the decoder always produces. The painter scales
-# it to the widget width, so a resize never needs to re-decode the file.
 WAVEFORM_RES = 1200
 
 
 class _WaveformDecoder(QThread):
-    """Decode audio files into peak envelopes off the GUI thread.
+    """Decode audio files into peak envelopes off the GUI thread."""
 
-    Latest-wins: a request arriving while one is in flight replaces the
-    pending path; after finishing, the thread re-checks and decodes the
-    newest request. The GUI thread is therefore never blocked by decoding,
-    even when the user rapidly spams next/prev.
-    """
-
-    decoded = pyqtSignal(str, object)  # (local_path, samples | None)
+    decoded = pyqtSignal(str, object)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -101,21 +84,16 @@ class _WaveformDecoder(QThread):
 
     @staticmethod
     def _decode_file(local_path: str):
-        """Read *local_path* into a normalized peak envelope.
-
-        Returns ``None`` when the file can't be decoded.
-        """
+        """Read *local_path* into a normalized peak envelope, or None if it fails."""
         try:
             import soundfile as sf
 
             data, _samplerate = sf.read(local_path, always_2d=True, dtype="int16")
-            # Convert to mono by averaging channels
             if data.ndim > 1 and data.shape[1] > 1:
                 mono = np.mean(data, axis=1)
             else:
                 mono = data.flatten()
 
-            # Downsample to the fixed envelope resolution (peak envelope)
             target_size = WAVEFORM_RES
             if len(mono) > target_size:
                 n_chunks = len(mono) // target_size
@@ -124,7 +102,6 @@ class _WaveformDecoder(QThread):
             else:
                 samples = np.abs(mono)
 
-            # Normalize
             max_val = np.max(samples)
             if max_val > 0:
                 samples = samples / max_val
@@ -134,11 +111,7 @@ class _WaveformDecoder(QThread):
 
 
 class WaveformWidget(QWidget):
-    """Custom-painted audio waveform.
-
-    Reads audio data using soundfile on a background thread, and draws a
-    filled waveform with progress overlay.
-    """
+    """Custom-painted audio waveform with progress overlay."""
 
     _CACHE_MAX = 6
 
@@ -146,32 +119,26 @@ class WaveformWidget(QWidget):
         super().__init__()
         self._mw = main_window
 
-        self._samples: Optional[np.ndarray] = None  # Downsampled waveform data
+        self._samples: Optional[np.ndarray] = None
         self._duration: float = 0.0
-        self._value: float = 0.0  # Current time in seconds
+        self._value: float = 0.0
         self._theme_color = QColor("#f58ea8")
         self._loaded_path: str = ""
-        # Small LRU of decoded envelopes keyed by file path, so returning to a
-        # recently-played song shows its waveform instantly.
         self._cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
 
         self.setMinimumHeight(40)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Background decoder thread (lives for the widget's lifetime).
         self._decoder = _WaveformDecoder(self)
         self._decoder.decoded.connect(self._on_decoded)
         self._decoder.start()
 
-        # Listen for audio changes
         self._mw.audio_manager.duration_changed.connect(self._on_audio_loaded)
         self._mw.audio_manager.current_time_changed.connect(self._on_time_changed)
 
     def shutdown(self) -> None:
         """Stop the decoder thread so the app can exit cleanly."""
         self._decoder.stop_and_wait()
-
-    # ── Cache helpers ───────────────────────────────────────────
 
     def _cache_get(self, path: str):
         samples = self._cache.get(path)
@@ -185,20 +152,12 @@ class WaveformWidget(QWidget):
         while len(self._cache) > self._CACHE_MAX:
             self._cache.popitem(last=False)
 
-    # ── Audio reaction ──────────────────────────────────────────
-
     def _on_audio_loaded(self, duration: float) -> None:
-        """React to a new audio source.
-
-        The heavy decode runs on a background thread, so switching songs
-        never blocks the GUI — the audio starts immediately and the waveform
-        fills in a moment later. Recently-decoded songs come from cache.
-        """
+        """Load the source's envelope from cache or request a background decode."""
         src = self._mw.audio_manager.src
         if not src:
             return
 
-        # Only process local files
         local_path = QUrl(src).toLocalFile()
         if not local_path:
             return
@@ -208,7 +167,6 @@ class WaveformWidget(QWidget):
             self.update()
             return
 
-        # Serve a recent decode from cache when available.
         cached = self._cache_get(local_path)
         if cached is not None:
             self._samples = cached
@@ -219,11 +177,7 @@ class WaveformWidget(QWidget):
         self._decoder.request(local_path)
 
     def _on_decoded(self, local_path: str, samples) -> None:
-        """Apply the decoded envelope from the worker thread.
-
-        The result is cached even if the user has already switched away, but
-        only applied when it still matches the current source.
-        """
+        """Apply the decoded envelope from the worker thread, if it is current."""
         if samples is not None:
             self._cache_put(local_path, samples)
         if QUrl(self._mw.audio_manager.src).toLocalFile() != local_path:
@@ -247,8 +201,6 @@ class WaveformWidget(QWidget):
         self._theme_color = color
         self.update()
 
-    # ── Painting ───────────────────────────────────────
-
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -257,23 +209,18 @@ class WaveformWidget(QWidget):
         h = self.height()
         mid = h // 2
 
-        # Always read the live theme so the waveform follows the user's
-        # theme color (and light/dark mode) at runtime.
         _bg, _fg, theme_hex, _dark = get_theme_colors()
         theme = QColor(theme_hex)
 
         if self._samples is None or len(self._samples) == 0:
-            # Draw flat line
             painter.setPen(QPen(QColor(_fg), 1))
             painter.drawLine(0, mid, w, mid)
             painter.end()
             return
 
-        # Build waveform polygon
         num_samples = len(self._samples)
         x_scale = w / num_samples
 
-        # Top half path
         top_path = QPainterPath()
         top_path.moveTo(0, mid)
         for i, val in enumerate(self._samples):
@@ -282,7 +229,6 @@ class WaveformWidget(QWidget):
             top_path.lineTo(x, y)
         top_path.lineTo(w, mid)
 
-        # Bottom half path (mirror)
         bot_path = QPainterPath()
         bot_path.moveTo(0, mid)
         for i, val in enumerate(self._samples):
@@ -291,7 +237,6 @@ class WaveformWidget(QWidget):
             bot_path.lineTo(x, y)
         bot_path.lineTo(w, mid)
 
-        # Draw background waveform (unplayed → muted foreground)
         painter.setPen(Qt.PenStyle.NoPen)
         unplayed = QColor(_fg)
         unplayed.setAlpha(80)
@@ -299,7 +244,6 @@ class WaveformWidget(QWidget):
         painter.drawPath(top_path)
         painter.drawPath(bot_path)
 
-        # Draw progress overlay (played → theme color)
         if self._duration > 0:
             progress_x = int((self._value / self._duration) * w) if self._duration > 0 else 0
 
@@ -314,13 +258,10 @@ class WaveformWidget(QWidget):
 
             painter.restore()
 
-            # Draw cursor line
             painter.setPen(QPen(theme, 2))
             painter.drawLine(progress_x, 0, progress_x, h)
 
         painter.end()
-
-    # ── Mouse Interaction ──────────────────────────────
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self._seek(event.position().x())
@@ -337,7 +278,6 @@ class WaveformWidget(QWidget):
             self._mw.audio_manager.current_time = time
 
     def resizeEvent(self, event) -> None:
-        """Repaint only — the envelope is decoded at a fixed resolution, so
-        resize never needs to re-decode the file (the painter scales it)."""
+        """Repaint on resize; the fixed-resolution envelope needs no re-decode."""
         super().resizeEvent(event)
         self.update()

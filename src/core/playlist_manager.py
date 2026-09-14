@@ -1,18 +1,4 @@
-"""Play queue manager — owns the play list, current index, and playback mode.
-
-Wraps the existing :class:`AudioManager` (the single QMediaPlayer) so the
-whole app shares one player.  The manager advances tracks on natural
-end-of-media according to the selected :class:`PlayMode`, and exposes
-list mutations used by the playlist panel ("-" remove, "+" insert-next).
-
-Design notes
-------------
-- A song loaded *outside* the queue (drag-and-drop, a direct 歌单 click)
-  is never auto-advanced: ``_on_media_ended`` only reacts when the audio
-  currently loaded matches the queue's current entry (path comparison).
-- The queue stores lightweight entries (path/title/artist/duration), not
-  the big song dicts owned by the playlist page.
-"""
+"""Play queue manager — owns the play list, current index, and playback mode."""
 
 from __future__ import annotations
 
@@ -52,8 +38,6 @@ class PlaylistManager(QObject):
         self._am.media_ended.connect(self._on_media_ended)
         self._load()
 
-    # ── Read-only accessors ──────────────────────────────────
-
     @property
     def queue(self) -> list[dict]:
         return list(self._queue)
@@ -76,14 +60,10 @@ class PlaylistManager(QObject):
         song = self.current_song
         return song["path"] if song else ""
 
-    # ── Mode ─────────────────────────────────────────────────
-
     def set_mode(self, mode: PlayMode) -> None:
         if mode != self._mode:
             self._mode = mode
             self.mode_changed.emit(mode)
-
-    # ── Queue mutations ──────────────────────────────────────
 
     @staticmethod
     def _entry(song: dict) -> dict:
@@ -123,17 +103,11 @@ class PlaylistManager(QObject):
         if index < self._current_index:
             self._current_index -= 1
         elif index == self._current_index:
-            # Current removed — the already-loaded audio keeps playing, but
-            # there is no longer a queue anchor to auto-advance from.
             self._current_index = -1
         self._emit_all()
 
     def insert_next(self, index: int) -> None:
-        """Duplicate the entry at *index* right after the current song.
-
-        This is "add as next", not "move": the source entry stays put, so
-        the same song can be queued repeatedly.
-        """
+        """Duplicate the entry at *index* right after the current song."""
         n = len(self._queue)
         if not (0 <= index < n):
             return
@@ -145,8 +119,6 @@ class PlaylistManager(QObject):
         self._queue.insert(insert_at, entry)
         self._emit_all()
 
-    # ── Playback ─────────────────────────────────────────────
-
     def play_index(self, index: int) -> None:
         """Load and play the entry at *index*."""
         n = len(self._queue)
@@ -154,20 +126,12 @@ class PlaylistManager(QObject):
             return
         path = self._queue[index]["path"]
         if not os.path.isfile(path):
-            # Leave the current selection untouched — caller prints a message.
             return
         self._current_index = index
         self._am.set_source(QUrl.fromLocalFile(path).toString())
-        # Keep "last played mp3" in sync so saving lyrics targets THIS song,
-        # not whatever was loaded first (张冠李戴 guard relies on this).
         if self._config is not None and hasattr(self._config, "remember_mp3_path"):
             self._config.remember_mp3_path(path)
         self._connect_autoplay()
-        # Only the playing pointer moved — the queue itself is unchanged.
-        # Emitting queue_changed here would make the drawer rebuild every row
-        # on every切歌 (a multi-second GUI freeze on large libraries). The
-        # panel only needs current_changed to re-tint the now-playing row, and
-        # the footer already refreshes song info / like state on it too.
         self.current_changed.emit(index)
         self._save()
 
@@ -199,8 +163,6 @@ class PlaylistManager(QObject):
         self._autoplay_connected = False
         self._am.play()
 
-    # ── End-of-media advancement ─────────────────────────────
-
     def _on_media_ended(self) -> None:
         n = len(self._queue)
         if self._current_index < 0 or n == 0:
@@ -208,7 +170,6 @@ class PlaylistManager(QObject):
 
         cur = self._queue[self._current_index]
         if _norm_path(self._am.local_path) != _norm_path(cur["path"]):
-            # A song loaded outside the queue finished — do not advance.
             return
 
         mode = self._mode
@@ -233,8 +194,6 @@ class PlaylistManager(QObject):
                 j = random.randrange(n)
             self.play_index(j)
 
-    # ── Internal ─────────────────────────────────────────────
-
     def _emit_all(self) -> None:
         self.queue_changed.emit()
         self.current_changed.emit(self._current_index)
@@ -252,8 +211,6 @@ class PlaylistManager(QObject):
         idx = data.get("index", -1)
         self._queue = songs
         self._current_index = idx if 0 <= idx < len(songs) else -1
-        # Restore the last-session playback mode (defaults to SINGLE when the
-        # config predates mode persistence).
         if hasattr(self._config, "get_last_play_mode"):
             try:
                 self._mode = PlayMode(self._config.get_last_play_mode())

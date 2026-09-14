@@ -1,9 +1,4 @@
-"""AI-assisted translation: dialog, prompt generation, API calls, pattern matching.
-
-All functions in this module accept a ``sync_page`` parameter (the
-``SynchronizerPage`` instance) to access shared state without tight
-coupling to the page class itself.
-"""
+"""AI-assisted translation: dialog, prompt generation, API calls, pattern matching."""
 
 from __future__ import annotations
 
@@ -15,19 +10,16 @@ from openai import OpenAI
 from typing import TYPE_CHECKING
 
 
-# ── Helpers ────────────────────────────────────────────────────────
-
 def _extract_base_url(api_url: str) -> str:
-    """Convert a full chat-completions URL to the base URL the openai
-    library expects (strip trailing /v1/chat/completions or /chat/completions)."""
+    """Strip ``/v1/chat/completions`` or ``/chat/completions`` from an API URL."""
     return re.sub(r"/(v1/)?chat/completions/?$", "", api_url)
 
 
 from PyQt6.QtCore import QThread as _QThread, pyqtSignal as _pyqtSignal
 
 class _ApiWorker(_QThread):
-    """QThread-based API worker — avoids Windows threading issues with httpx."""
-    result_ready = _pyqtSignal(bool, str)  # ok, message/error
+    """QThread-based API worker."""
+    result_ready = _pyqtSignal(bool, str)
 
     def __init__(self, api_key: str, api_url: str, model: str,
                  messages: list[dict], timeout: float = 15.0,
@@ -89,13 +81,8 @@ if TYPE_CHECKING:
     from ..synchronizer_page import SynchronizerPage
 
 
-# ── Prompt Generation ──────────────────────────────────────────────
-
 def build_prompt_text(sync_page: "SynchronizerPage") -> tuple[str, int] | None:
-    """Build the AI translation prompt from current LRC lyrics.
-
-    Returns ``(prompt_text, line_count)`` or ``None`` if no usable lyrics.
-    """
+    """Return ``(prompt_text, line_count)`` from current LRC lyrics, or ``None``."""
     state = sync_page._mw.lrc_state
     prefs = sync_page._mw.config.get_preferences()
     fixed: Fixed = prefs.get("fixed", 3)
@@ -124,17 +111,11 @@ def build_prompt_text(sync_page: "SynchronizerPage") -> tuple[str, int] | None:
     return prompt, len(lines)
 
 
-# ── AI Assist Dialog ───────────────────────────────────────────────
-
 def show_ai_assist_dialog(
     sync_page: "SynchronizerPage",
     target_text_edit: QPlainTextEdit | None = None,
 ) -> None:
-    """Open the AI assist dialog with two options for translation help.
-
-    When *target_text_edit* is provided, API auto results fill that
-    widget directly instead of opening a new pattern-match dialog.
-    """
+    """Open the AI assist dialog with two options for translation help."""
     mw = sync_page._mw
 
     dialog = QDialog(sync_page)
@@ -146,7 +127,6 @@ def show_ai_assist_dialog(
     dlg_layout.setContentsMargins(16, 16, 16, 16)
     dlg_layout.setSpacing(12)
 
-    # Title
     title = QLabel("AI 辅助翻译")
     title.setStyleSheet("font-size: 18px; font-weight: bold;")
     title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -154,11 +134,9 @@ def show_ai_assist_dialog(
 
     dlg_layout.addSpacing(4)
 
-    # Stacked widget for pages
     stack = QStackedWidget()
     dlg_layout.addWidget(stack, stretch=1)
 
-    # ── Page 0: Two option buttons ──
     options_page = QWidget()
     options_layout = QVBoxLayout(options_page)
     options_layout.setContentsMargins(0, 0, 0, 0)
@@ -194,9 +172,8 @@ def show_ai_assist_dialog(
     options_layout.addWidget(btn_api)
 
     options_layout.addStretch()
-    stack.addWidget(options_page)  # index 0
+    stack.addWidget(options_page)
 
-    # ── Page 1: Model chat website ──
     chat_page = QWidget()
     chat_layout = QVBoxLayout(chat_page)
     chat_layout.setContentsMargins(0, 0, 0, 0)
@@ -222,13 +199,11 @@ def show_ai_assist_dialog(
     btn_copy_prompt.clicked.connect(lambda: _generate_and_copy_prompt(sync_page, dialog))
     chat_layout.addWidget(btn_copy_prompt)
 
-    # Separator
     sep = QLabel("— AI 聊天网站 —")
     sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
     sep.setStyleSheet("color: #888; font-size: 12px; margin-top: 8px;")
     chat_layout.addWidget(sep)
 
-    # Links section
     links_widget = QWidget()
     links_layout = QVBoxLayout(links_widget)
     links_layout.setContentsMargins(8, 0, 8, 0)
@@ -264,9 +239,8 @@ def show_ai_assist_dialog(
 
     chat_layout.addWidget(links_widget)
     chat_layout.addStretch()
-    stack.addWidget(chat_page)  # index 1
+    stack.addWidget(chat_page)
 
-    # ── Page 2: API auto ──
     api_page = QWidget()
     api_layout = QVBoxLayout(api_page)
     api_layout.setContentsMargins(0, 0, 0, 0)
@@ -278,12 +252,10 @@ def show_ai_assist_dialog(
     btn_back2.clicked.connect(lambda: stack.setCurrentIndex(0))
     api_layout.addWidget(btn_back2)
 
-    # Sub-stack: model list (0) vs config form (1)
     api_substack = QStackedWidget()
     api_layout.addWidget(api_substack, stretch=1)
     api_layout.addStretch()
 
-    # ── Helper: do the actual translation ──
     def _do_translate(cfg: dict) -> None:
         """Build prompt, call AI API in background, show result in a popup."""
         result = build_prompt_text(sync_page)
@@ -299,7 +271,6 @@ def show_ai_assist_dialog(
         api_key = cfg["api_key"]
         model = cfg["model"]
 
-        # ── Progress dialog ──
         progress = QDialog(dialog)
         progress.setWindowTitle("API 自动翻译")
         progress.setFixedSize(380, 110)
@@ -381,7 +352,6 @@ def show_ai_assist_dialog(
                 )
                 return
 
-            # ── "翻译成功" confirm dialog ──
             _show_done(content)
 
         def _show_done(response_text: str) -> None:
@@ -492,8 +462,8 @@ def show_ai_assist_dialog(
         def _fill_pattern_match(
             result_dialog: QDialog, text: str,
         ) -> None:
-            result_dialog.accept()  # close result dialog
-            dialog.accept()         # close AI assist dialog
+            result_dialog.accept()
+            dialog.accept()
 
             if target_text_edit is not None:
                 target_text_edit.setPlainText(text)
@@ -514,13 +484,12 @@ def show_ai_assist_dialog(
             messages=[{"role": "user", "content": prompt}],
             timeout=180.0,
             temperature=0.3,
-            max_tokens=None,  # no limit for translation
+            max_tokens=None,
             parent=progress,
         )
         _translate_worker.result_ready.connect(_on_translate_done)
         _translate_worker.start()
 
-    # ── Build the model-list page ──
     def _build_model_list() -> None:
         """Rebuild the model-list page from saved configs."""
         old = api_substack.widget(0)
@@ -685,7 +654,6 @@ def show_ai_assist_dialog(
         api_substack.insertWidget(0, list_page)
         api_substack.setCurrentIndex(0)
 
-    # ── Build the config-form page ──
     def _build_config_form(edit_index: int | None = None) -> None:
         old = api_substack.widget(1)
         if old is not None:
@@ -855,16 +823,15 @@ def show_ai_assist_dialog(
 
         api_substack.insertWidget(1, form_page)
 
-    # ── Initial state ──
     if mw.config.has_api_configs():
         _build_model_list()
-        _build_config_form()  # prepare the form for later use
-    else:
-        _build_model_list()  # empty list with "add" button
         _build_config_form()
-        api_substack.setCurrentIndex(1)  # auto-enter config form
+    else:
+        _build_model_list()
+        _build_config_form()
+        api_substack.setCurrentIndex(1)
 
-    stack.addWidget(api_page)  # index 2
+    stack.addWidget(api_page)
 
     dialog.exec()
 
@@ -887,29 +854,17 @@ def _generate_and_copy_prompt(
     )
 
 
-# ── Pattern Matching ───────────────────────────────────────────────
-
 def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
                              overwrite: bool = False) -> None:
-    """Match translations in a background thread, then fill them one by one.
-
-    - Background thread: pure regex matching (never touches Qt / UI)
-    - Main thread QTimer poll: check if matching is done
-    - Main thread QTimer fill: apply one translation at a time,
-      updating the visible _TranslationRow directly → line-by-line effect
-
-    When *overwrite* is True, existing translations are also replaced.
-    """
+    """Match translations in a background thread, then fill them one by one."""
     state = sync_page._mw.lrc_state
     prefs = sync_page._mw.config.get_preferences()
     fixed: Fixed = prefs.get("fixed", 3)
 
-    # Snapshot lyric data for the worker thread (plain Python, no Qt)
     lyric_snapshot: list[tuple[float | None, str, str]] = [
         (ln.time, ln.text, ln.translation) for ln in state.lyric
     ]
 
-    # ── Progress dialog with animated dots ────────────────
     progress = QDialog(sync_page)
     progress.setWindowTitle("模式匹配")
     progress.setFixedSize(300, 110)
@@ -951,7 +906,6 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
 
     progress.show()
 
-    # ── Background matching (plain Python thread, no Qt) ──
     _matches: list[tuple[int, str]] = []
     _done = [False]
 
@@ -995,7 +949,6 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
 
     threading.Thread(target=_match_work, daemon=True).start()
 
-    # ── Poll timer: wait for matching, then fill one by one ─
     def _poll() -> None:
         if not _done[0]:
             return
@@ -1042,7 +995,6 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
                         theme_color=theme_color,
                         is_dark=is_dark,
                     )
-                # Scroll to keep the filled row visible
                 sync_page._scroll_to_row(idx)
 
         _fill_timer = QTimer(sync_page)

@@ -1,20 +1,4 @@
-"""One row in the synchronizer: timestamp button + text display.
-
-Three display modes (managed via QStackedWidget):
-- View  (0): QLabel — default read-only display
-- Edit  (1): QLineEdit — inline text editing
-- Split (2): QTextEdit — inline split with blinking // markers
-
-Signals
-------
-seek_requested(float)       — user clicked timestamp → seek audio
-edit_requested(int)         — user Ctrl+clicked / double-clicked timestamp → edit dialog
-row_clicked(int)            — user clicked the text area → select this line
-edit_lyric_requested(int)   — context menu "编辑" → triggers enter_edit_mode
-split_lyric_requested(int)  — context menu "拆分" → triggers enter_split_mode
-lyric_text_changed(int,str) — edit confirmed → update state
-lyric_split_done(int,str,list) — split confirmed (index, cleaned_text, positions)
-"""
+"""One row in the synchronizer: timestamp button + text display."""
 
 from __future__ import annotations
 
@@ -48,22 +32,18 @@ class _TimeButton(QPushButton):
 class _LyricRow(QFrame):
     """One row in the synchronizer: timestamp button + text display."""
 
-    # View-mode signals
     seek_requested = pyqtSignal(float)
     edit_requested = pyqtSignal(int)
     row_clicked = pyqtSignal(int)
     multi_select_toggled = pyqtSignal(int)
 
-    # Context menu → inline mode triggers
     edit_lyric_requested = pyqtSignal(int)
     split_lyric_requested = pyqtSignal(int)
     append_requested = pyqtSignal(int)
 
-    # Batch operations (act on all selected rows)
     delete_requested = pyqtSignal()
     merge_requested = pyqtSignal()
 
-    # Result signals (emitted when inline editing/splitting is done)
     lyric_text_changed = pyqtSignal(int, str)
     lyric_split_done = pyqtSignal(int, str, list)
 
@@ -97,7 +77,6 @@ class _LyricRow(QFrame):
         layout.setContentsMargins(4, 2, 8, 2)
         layout.setSpacing(6)
 
-        # ── Timestamp button ──────────────────────────
         self._time_btn = _TimeButton()
         self._time_btn.setFixedWidth(105)
         self._time_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -107,42 +86,34 @@ class _LyricRow(QFrame):
         self._time_btn.double_clicked.connect(self._on_time_double_clicked)
         layout.addWidget(self._time_btn)
 
-        # ── Display stack (3 modes) ───────────────────
         self._display_stack = QStackedWidget()
 
-        # [0] View: QLabel
         text = format_text(line.text, space_start, space_end)
         self._text_label = QLabel(text)
         self._text_label.setTextFormat(Qt.TextFormat.PlainText)
         self._text_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        self._display_stack.addWidget(self._text_label)  # index 0
+        self._display_stack.addWidget(self._text_label)
 
-        # [1] Edit: QLineEdit
         self._edit_input = QLineEdit()
         self._edit_input.returnPressed.connect(self._on_edit_confirm)
         self._edit_input.installEventFilter(self)
-        self._display_stack.addWidget(self._edit_input)  # index 1
+        self._display_stack.addWidget(self._edit_input)
 
-        # [2] Split: QTextEdit
         self._split_input = QTextEdit()
         self._split_input.setFixedHeight(44)
         self._split_input.setTabChangesFocus(True)
         self._split_input.textChanged.connect(self._on_split_text_changed)
         self._split_input.installEventFilter(self)
-        self._display_stack.addWidget(self._split_input)  # index 2
+        self._display_stack.addWidget(self._split_input)
 
         layout.addWidget(self._display_stack, stretch=1)
 
-        # Split blink timer
         from PyQt6.QtCore import QTimer
         self._split_blink_timer = QTimer(self)
         self._split_blink_timer.timeout.connect(self._toggle_split_blink)
         self._split_blink_on = True
 
-        # Initial render
         self._restyle()
-
-    # ── Public API ────────────────────────────────────────
 
     @property
     def lyric_index(self) -> int:
@@ -176,41 +147,31 @@ class _LyricRow(QFrame):
         self._theme_color = theme_color
         self._is_dark = is_dark
 
-        # Update timestamp button
         if line.time is not None:
             tag = convert_time_to_tag(line.time, fixed)
             self._time_btn.setText(tag)
         else:
             self._time_btn.setText("[--:--.---]")
 
-        # Only update text label when in view mode (not while user is editing)
         if self._display_stack.currentIndex() == 0:
             text = format_text(line.text, space_start, space_end)
             self._text_label.setText(text)
 
         self._restyle()
 
-    # ── Mode: Enter / Exit ────────────────────────────────
-
     def enter_edit_mode(self) -> None:
-        """Switch to inline edit mode."""
         self._edit_input.setText(self._line.text)
         self._display_stack.setCurrentIndex(1)
         self._edit_input.setFocus()
         self._edit_input.selectAll()
 
     def exit_edit_mode(self) -> None:
-        """Public entry point — exit both edit and split modes."""
+        """Exit both edit and split modes."""
         self._exit_edit_mode(save=True)
         self._exit_split_mode()
 
     def _exit_edit_mode(self, save: bool = True) -> None:
-        """Leave edit mode, optionally saving changes.
-
-        Text containing interior ``//`` markers is treated as a line-break
-        signal (same as split mode): the line is split at those markers
-        and the markers are removed.
-        """
+        """Leave edit mode, optionally saving changes."""
         in_edit = self._display_stack.currentIndex() == 1
         if save and in_edit:
             new_text = self._edit_input.text()
@@ -229,7 +190,6 @@ class _LyricRow(QFrame):
         self._split_input.setPlainText(self._line.text)
         self._display_stack.setCurrentIndex(2)
         self._split_input.setFocus()
-        # Select all for convenience
         cursor = self._split_input.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         cursor.movePosition(QTextCursor.MoveOperation.End, QTextCursor.MoveMode.KeepAnchor)
@@ -245,13 +205,9 @@ class _LyricRow(QFrame):
         self.setFixedHeight(36)
         self._display_stack.setCurrentIndex(0)
 
-    # ── Edit Mode Handlers ────────────────────────────────
-
     def _on_edit_confirm(self) -> None:
         """Enter pressed in edit input."""
         self._exit_edit_mode(save=True)
-
-    # ── Split Mode Handlers ───────────────────────────────
 
     def _on_split_text_changed(self) -> None:
         self._apply_split_highlights()
@@ -275,23 +231,15 @@ class _LyricRow(QFrame):
 
     @staticmethod
     def _marker_split_result(text: str) -> "tuple[str, list[int]] | None":
-        """Resolve '//' markers into a line split (shared by edit & split mode).
-
-        Returns ``(cleaned_text, split_positions)`` when *text* contains at
-        least one interior ``//`` marker, otherwise ``None`` (caller keeps
-        the text as-is).  Markers at the very start/end are ignored.
-        """
+        """Return ``(cleaned_text, split_positions)`` for interior '//' markers, else ``None``."""
         markers = _LyricRow._find_markers(text)
         if not any(0 < p < len(text) - 1 for p in markers):
             return None
 
-        # Remove "//" entirely from right to left
         cleaned = text
         for pos in reversed(markers):
             cleaned = cleaned[:pos] + cleaned[pos + 2:]
 
-        # Compute split positions in cleaned text; each removed "//"
-        # shifts subsequent positions left by 2.
         split_positions = [
             pos - 2 * i
             for i, pos in enumerate(markers)
@@ -330,10 +278,7 @@ class _LyricRow(QFrame):
         self._split_input.setExtraSelections(extra_selections)
 
     def _do_cursor_split(self) -> None:
-        """Ctrl+Enter: split at current cursor position.
-
-        Invalid cursor (at start/end) → silently exit split mode (no-op).
-        """
+        """Ctrl+Enter: split at the current cursor position."""
         cursor = self._split_input.textCursor()
         pos = cursor.position()
         text = self._split_input.toPlainText()
@@ -342,11 +287,7 @@ class _LyricRow(QFrame):
         self._exit_split_mode()
 
     def _do_marker_split(self) -> None:
-        """Enter: split at all '//' marker positions.
-
-        '//' markers are REMOVED entirely (not converted to '/').
-        No valid markers → silently exit split mode (no-op).
-        """
+        """Enter: split at all '//' marker positions."""
         text = self._split_input.toPlainText()
         result = self._marker_split_result(text)
         if result is None:
@@ -355,8 +296,6 @@ class _LyricRow(QFrame):
         cleaned, split_positions = result
         self.lyric_split_done.emit(self._index, cleaned, split_positions)
         self._exit_split_mode()
-
-    # ── Event Filter (keyboard for editors) ────────────────
 
     def eventFilter(self, obj, event):
         """Intercept Escape / Enter in edit and split inputs."""
@@ -378,8 +317,6 @@ class _LyricRow(QFrame):
                         self._do_marker_split()
                     return True
         return super().eventFilter(obj, event)
-
-    # ── Internal ──────────────────────────────────────────
 
     def _on_time_clicked(self) -> None:
         from PyQt6.QtWidgets import QApplication
@@ -414,11 +351,8 @@ class _LyricRow(QFrame):
             f"_LyricRow {{ background-color: {bg}; border: {border}; border-radius: 4px; }}"
         )
 
-        # Timestamp button style
         contrast = _contrast_for_theme(theme)
         if self._line.time is not None:
-            # When selected, the row bg is theme-colored, so the button
-            # (which is transparent) needs contrast text to be readable.
             btn_bg = f"{theme}" if not self._selected else "transparent"
             btn_text = contrast
             btn_style = (
@@ -455,12 +389,10 @@ class _LyricRow(QFrame):
             )
         self._time_btn.setStyleSheet(btn_style)
 
-        # Text label style (only applies to view mode)
         self._text_label.setStyleSheet(
             f"QLabel {{ color: {fg}; font-size: 14px; background: transparent; border: none; }}"
         )
 
-        # Edit input style
         self._edit_input.setStyleSheet(
             f"QLineEdit {{"
             f"  color: {fg}; font-size: 14px; background: transparent;"
@@ -468,7 +400,6 @@ class _LyricRow(QFrame):
             f"}}"
         )
 
-        # Split input style
         self._split_input.setStyleSheet(
             f"QTextEdit {{"
             f"  color: {fg}; font-size: 13px; background: transparent;"
@@ -477,14 +408,7 @@ class _LyricRow(QFrame):
         )
 
     def mousePressEvent(self, event) -> None:
-        """Handle mouse clicks on the row.
-
-        On text area (not timestamp button):
-        - Left click: single-select this row (clears multi-select)
-        - Ctrl+Left click: toggle this row in multi-selection
-        - Ctrl+Right click: append an empty line below
-        - Right click (no Ctrl): falls through to contextMenuEvent
-        """
+        """Handle mouse clicks on the row's text area."""
         if self._time_btn.geometry().contains(event.pos()):
             super().mousePressEvent(event)
             return
@@ -510,11 +434,7 @@ class _LyricRow(QFrame):
         super().mouseDoubleClickEvent(event)
 
     def contextMenuEvent(self, event) -> None:
-        """Right-click context menu: edit / split / append / delete / merge.
-
-        Does NOT clear multi-selection — the user can right-click a
-        multi-selected group and act on all of them at once.
-        """
+        """Right-click context menu: edit / split / append / delete / merge."""
         from PyQt6.QtWidgets import QMenu
 
         menu = QMenu(self)

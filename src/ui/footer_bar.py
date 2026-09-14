@@ -19,16 +19,11 @@ if TYPE_CHECKING:
 
 
 class FooterBar(QWidget):
-    """Bottom bar hosting the audio player controls.
-
-    Also provides drag-and-drop support for audio files.
-    """
+    """Bottom bar hosting the audio player controls and file drops."""
 
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__(main_window)
         self.setObjectName("footerBar")
-        # Plain QWidget subclasses don't paint stylesheet backgrounds
-        # without this flag (the #footerBar surface colour would be lost).
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setFixedHeight(100)
         self.setAcceptDrops(True)
@@ -39,10 +34,8 @@ class FooterBar(QWidget):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)
 
-        # AudioControls will be set after creation (circular dependency)
         self.audio_controls: "AudioControls | None" = None
 
-        # Placeholder label until audio controls are set
         from PyQt6.QtWidgets import QLabel
         self._placeholder = QLabel("未加载音频")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -52,7 +45,6 @@ class FooterBar(QWidget):
         """Set the audio controls widget."""
         layout = self.layout()
         if layout:
-            # Remove placeholder
             if self._placeholder:
                 layout.removeWidget(self._placeholder)
                 self._placeholder.hide()
@@ -66,8 +58,6 @@ class FooterBar(QWidget):
         if self.audio_controls:
             self.audio_controls.update_state(data)
 
-    # ── Drag and Drop ──────────────────────────────────────
-
     def dragEnterEvent(self, event) -> None:
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -80,17 +70,12 @@ class FooterBar(QWidget):
                 self._handle_file_drop(file_path)
 
     def _handle_file_drop(self, file_path: str) -> None:
-        """Handle a file dropped onto the footer.
-
-        Audio files → load into player.
-        Text/LRC files → parse as lyrics (switch to editor).
-        """
+        """Handle a file dropped onto the footer (audio loads, text parses as lyrics)."""
         ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
         audio_exts = {"mp3", "flac", "wav", "ogg", "m4a", "aac", "wma", "opus"}
         text_exts = {"txt", "lrc"}
 
         if ext in audio_exts:
-            # Load audio
             self._main_window.config.remember_mp3_path(file_path)
             self._main_window.audio_manager.set_source(
                 QUrl.fromLocalFile(file_path).toString()
@@ -99,7 +84,6 @@ class FooterBar(QWidget):
                 QUrl.fromLocalFile(file_path).toString()
             )
         elif ext in text_exts:
-            # Load lyrics text
             self._main_window.config.remember_lrc_path(file_path)
             try:
                 with open(file_path, "r", encoding="utf-8") as f:

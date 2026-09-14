@@ -1,13 +1,4 @@
-"""Encryption utilities using Windows DPAPI (Data Protection API).
-
-DPAPI encrypts data tied to the current user's login credentials,
-so the encrypted blob can only be decrypted by the same user on the
-same machine.  No extra dependencies required — uses ctypes to call
-crypt32.dll directly.
-
-The encrypted data is returned as a base64 string for safe storage
-in JSON config files.
-"""
+"""Encryption utilities using Windows DPAPI (per-user, base64-encoded output)."""
 
 from __future__ import annotations
 
@@ -15,10 +6,8 @@ import base64
 import ctypes
 from ctypes import wintypes
 
-# ── Windows DPAPI constants ──────────────────────────────────
-
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1
-_CRYPTPROTECT_LOCAL_MACHINE = 0x4  # unused — we want per-user encryption
+_CRYPTPROTECT_LOCAL_MACHINE = 0x4
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -27,8 +16,6 @@ class _DATA_BLOB(ctypes.Structure):
         ("pbData", ctypes.POINTER(ctypes.c_char)),
     ]
 
-
-# ── ctypes wrappers ──────────────────────────────────────────
 
 _crypt32 = ctypes.windll.crypt32
 _kernel32 = ctypes.windll.kernel32
@@ -47,10 +34,10 @@ def _protect(plaintext: bytes) -> bytes:
 
     ok = _crypt32.CryptProtectData(
         ctypes.byref(data_in),
-        None,  # description (optional)
-        None,  # entropy (optional)
-        None,  # reserved
-        None,  # prompt struct
+        None,
+        None,
+        None,
+        None,
         _CRYPTPROTECT_UI_FORBIDDEN,
         ctypes.byref(data_out),
     )
@@ -78,10 +65,10 @@ def _unprotect(ciphertext: bytes) -> bytes:
 
     ok = _crypt32.CryptUnprotectData(
         ctypes.byref(data_in),
-        None,  # description out (optional)
-        None,  # entropy (optional)
-        None,  # reserved
-        None,  # prompt struct
+        None,
+        None,
+        None,
+        None,
         _CRYPTPROTECT_UI_FORBIDDEN,
         ctypes.byref(data_out),
     )
@@ -95,8 +82,6 @@ def _unprotect(ciphertext: bytes) -> bytes:
 
     return result
 
-
-# ── Public API ───────────────────────────────────────────────
 
 def encrypt(plaintext: str) -> str:
     """Encrypt a string and return a base64-encoded encrypted blob."""

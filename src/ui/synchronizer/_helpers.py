@@ -4,12 +4,7 @@ from __future__ import annotations
 
 
 def _rgba(color: str, alpha: float) -> str:
-    """Return ``rgba(r, g, b, a)`` for a ``#rrggbb`` color.
-
-    Qt's QSS parser reads 8-digit hex as ``#AARRGGBB`` (alpha first), so
-    ``"#f58ea8" + "22"`` does NOT mean "pink at 13% opacity".  Always spell
-    transparency out as ``rgba()``.
-    """
+    """Return ``rgba(r, g, b, a)`` for a ``#rrggbb`` color."""
     color = color.lstrip("#")
     r = int(color[0:2], 16)
     g = int(color[2:4], 16)
@@ -18,10 +13,7 @@ def _rgba(color: str, alpha: float) -> str:
 
 
 def _contrast_for_theme(theme_color: str) -> str:
-    """Return black or white text color that contrasts with the given theme color.
-
-    Uses WCAG luminance check (same algorithm as content_stack._is_light_color).
-    """
+    """Return black or white text color that contrasts with the given theme color."""
     hex_color = theme_color.lstrip("#")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)

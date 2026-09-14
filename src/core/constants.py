@@ -3,10 +3,8 @@
 from enum import IntEnum, StrEnum
 
 
-# ── Storage Keys ──────────────────────────────────────────────
-
 class LocalKey:
-    """Keys for persistent storage (localStorage equivalent)."""
+    """Keys for persistent storage."""
     TOKEN = "token"
     GIST_ID = "gistId"
     GIST_ETAG = "gistEtag"
@@ -16,7 +14,7 @@ class LocalKey:
 
 
 class SessionKey:
-    """Keys for session-scoped storage (sessionStorage equivalent)."""
+    """Keys for session-scoped in-memory storage."""
     AUDIO_SRC = "audioSrc"
     EDITOR_DETAILS_OPEN = "editorDetailsOpen"
     SYNC_MODE = "syncMode"
@@ -24,10 +22,8 @@ class SessionKey:
     RATELIMIT = "ratelimit"
 
 
-# ── LRC Action Types ──────────────────────────────────────────
-
 class ActionType(IntEnum):
-    """Action types for LRC state reducer (mirrors useLrc.ts ActionType)."""
+    """Action types for the LRC state reducer."""
     PARSE = 0
     REFRESH = 1
     NEXT = 2
@@ -38,11 +34,8 @@ class ActionType(IntEnum):
     GET_STATE = 7
 
 
-# ── Input Actions (Keyboard Bindings) ─────────────────────────
-
 class InputAction(StrEnum):
-    """All bindable actions, identical to web app's InputAction enum."""
-    # Synchronizer actions
+    """All bindable keyboard actions."""
     SYNC = "sync"
     DELETE_TIME = "deleteTime"
     RESET_OFFSET = "resetOffset"
@@ -55,7 +48,6 @@ class InputAction(StrEnum):
     PAGE_UP = "pageUp"
     PAGE_DOWN = "pageDown"
 
-    # Audio control actions
     SEEK_BACKWARD = "seekBackward"
     SEEK_FORWARD = "seekForward"
     RESET_RATE = "resetRate"
@@ -65,33 +57,28 @@ class InputAction(StrEnum):
     PREV_SONG = "prevSong"
     NEXT_SONG = "nextSong"
 
-    # Lyric editing actions
     COPY_LINE = "copyLine"
     SPLIT_LYRIC = "splitLyric"
     DELETE_LINES = "deleteLines"
     MERGE_LINES = "mergeLines"
     SELECT_ALL = "selectAll"
 
-    # Toolbar actions
     SAVE = "save"
     EXPORT = "export"
     TRANSLATE = "translate"
 
-    # Global
     SHOW_HELP = "showHelp"
     UNDO = "undo"
     REDO = "redo"
 
 
-# ── Playback Mode ────────────────────────────────────────────
-
 class PlayMode(IntEnum):
     """Playback modes for the play queue."""
-    SINGLE = 0        # 单次播放 — 播完当前一首即停
-    SEQUENTIAL = 1    # 顺序播放 — 从列表头到尾播完即停
-    LOOP = 2          # 循环播放 — 列表播完从头再来
-    SINGLE_LOOP = 3   # 单曲循环 — 单曲反复播放直到用户暂停
-    SHUFFLE = 4       # 随机播放 — 每首播完随机选下一首
+    SINGLE = 0
+    SEQUENTIAL = 1
+    LOOP = 2
+    SINGLE_LOOP = 3
+    SHUFFLE = 4
 
 
 PLAY_MODE_LABELS = {
@@ -111,16 +98,12 @@ PLAY_MODE_ORDER = [
 ]
 
 
-# ── Audio State ───────────────────────────────────────────────
-
 class AudioStateType(IntEnum):
-    """Types of audio state changes (mirrors AudioActionType)."""
+    """Types of audio state changes."""
     PAUSE = 0
     GET_DURATION = 1
     RATE_CHANGE = 2
 
-
-# ── Sync Mode ─────────────────────────────────────────────────
 
 class SyncMode(IntEnum):
     """Synchronizer display mode."""
@@ -128,16 +111,11 @@ class SyncMode(IntEnum):
     HIGHLIGHT = 1
 
 
-# ── Theme Mode ────────────────────────────────────────────────
-
 class ThemeMode(IntEnum):
-    """Color theme mode."""
     AUTO = 0
     LIGHT = 1
     DARK = 2
 
-
-# ── Page Routes ───────────────────────────────────────────────
 
 class PageRoute:
     """Page indices in the QStackedWidget."""
