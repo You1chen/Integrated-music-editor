@@ -219,7 +219,6 @@ class _CropPreview(QWidget):
             int(r.height() * sy),
         )
 
-
     def _image_display_rect(self) -> QRect:
         """Return the rectangle where the image is drawn (centered, keeping AR)."""
         if self._image.isNull():
@@ -233,7 +232,6 @@ class _CropPreview(QWidget):
         dx = (ww - dw) // 2
         dy = (wh - dh) // 2
         return QRect(dx, dy, dw, dh)
-
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -277,7 +275,6 @@ class _CropPreview(QWidget):
             ]
             for cx, cy in corners:
                 painter.drawRect(cx - hs // 2, cy - hs // 2, hs, hs)
-
 
     _HANDLE_HIT = 10
 
@@ -554,12 +551,10 @@ class MetaEditorPage(QScrollArea):
 
         self._refresh()
 
-
     def showEvent(self, event) -> None:
         """Refresh form when the page becomes visible."""
         super().showEvent(event)
         self._refresh()
-
 
     def _refresh(self) -> None:
         """Re-read audio tags and populate the form."""
@@ -796,7 +791,6 @@ class MetaEditorPage(QScrollArea):
         self._cover_data = None
         self._cover_mime = ""
 
-
     def _set_cover_button_icon(self, data: bytes | None) -> None:
         """Update the cover thumbnail button with the given image data."""
         if data:
@@ -860,7 +854,6 @@ class MetaEditorPage(QScrollArea):
         self._cover_thumbnail.setIcon(QIcon())
         self._cover_thumbnail.setText("无封面")
         self._cover_info.setText("")
-
 
     def _on_audio_state_changed(self, data) -> None:
         """Refresh when audio source changes (e.g. new file loaded)."""

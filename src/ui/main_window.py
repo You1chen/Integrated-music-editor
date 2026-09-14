@@ -150,7 +150,6 @@ class MainWindow(QMainWindow):
         if app_instance:
             app_instance.installEventFilter(self)
 
-
     def eventFilter(self, obj, event):
         """App-wide event filter that routes keyboard events."""
         if event.type() != QEvent.Type.KeyPress:
@@ -228,7 +227,6 @@ class MainWindow(QMainWindow):
             return True
         return super().eventFilter(obj, event)
 
-
     def closeEvent(self, event) -> None:
         """Handle draft lifecycle on window close."""
         if self._playlist_panel is not None:
@@ -253,7 +251,6 @@ class MainWindow(QMainWindow):
         self._closing = True
         super().closeEvent(event)
 
-
     def handle_global_key(self, event: QKeyEvent) -> bool:
         """Handle keyboard events globally; returns True if handled."""
         action = self.keybinding_manager.get_matched_action(event)
@@ -272,7 +269,6 @@ class MainWindow(QMainWindow):
         ):
             if not self.audio_manager.src:
                 return False
-
 
         rate = self.audio_manager.playback_rate
 
@@ -350,7 +346,6 @@ class MainWindow(QMainWindow):
             return True
 
         return False
-
 
     def _connect_signals(self) -> None:
         self.header_bar.page_requested.connect(self.content_stack.set_page)
@@ -453,12 +448,10 @@ class MainWindow(QMainWindow):
             return
         self.config.set_select_index(self.lrc_state.select_index)
 
-
     def set_play_mode(self, mode: PlayMode) -> None:
         """Set the playback mode and persist it."""
         self.playlist.set_mode(mode)
         self.config.set_last_play_mode(int(mode))
-
 
     def lyric_axis_visible(self) -> bool:
         """Current lyrics-axis visibility on the home page."""
@@ -471,7 +464,6 @@ class MainWindow(QMainWindow):
         if home is not None:
             home.set_lyric_axis_visible(self._lyric_axis_visible)
         return self._lyric_axis_visible
-
 
     def toggle_playlist_panel(self) -> bool:
         """Open or close the queue drawer.  Returns the new visible state."""
@@ -543,7 +535,6 @@ class MainWindow(QMainWindow):
         self.playlist.set_queue(songs)
         self.playlist.play_index(0)
         print(f"已导入 {len(songs)} 首到播放列表")
-
 
     def _show_welcome_dialog(self) -> None:
         """Show the non-modal welcome guide dialog."""

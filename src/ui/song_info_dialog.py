@@ -355,7 +355,6 @@ class SongInfoDialog(QDialog):
 
         self._load()
 
-
     def _load(self) -> None:
         pix = _read_cover(self._path)
         if pix is not None:
@@ -384,7 +383,6 @@ class SongInfoDialog(QDialog):
         else:
             self._info, self._old_lines, self._old_meta = {}, [], []
         self._lyric_edit.setPlainText("\n".join(self._old_lines))
-
 
     def _on_save_meta(self) -> None:
         values = {key: inp.text() for key, inp in self._inputs.items()}
@@ -418,7 +416,6 @@ class SongInfoDialog(QDialog):
 
         if _norm(self._mw.audio_manager.local_path) == _norm(self._path):
             self._mw.lrc_state.init_from_text(text, self._mw.trim_options)
-
 
     def _refresh_playlist(self) -> None:
         try:
