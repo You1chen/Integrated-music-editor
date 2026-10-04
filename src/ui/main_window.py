@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 
 from ..core.audio_manager import AudioManager, AudioState, AudioStateData
 from ..core.config_manager import ConfigManager
-from ..core.constants import InputAction, PageRoute, PlayMode, SyncMode
+from ..core.constants import InputAction, PageRoute, PlayMode
 from ..core.keybinding import KeyBindingManager
 from ..core.lrc_parser import FormatOptions, Fixed, TrimOptions
 from ..core.lrc_state import LrcStateManager

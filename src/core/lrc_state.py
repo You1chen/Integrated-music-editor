@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .constants import ActionType
 from .lrc_parser import (
     FormatOptions,
     Fixed,

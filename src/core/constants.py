@@ -1,37 +1,6 @@
-"""Application-wide constants, enums, and storage keys."""
+"""Application-wide enums and constants."""
 
 from enum import IntEnum, StrEnum
-
-
-class LocalKey:
-    """Keys for persistent storage."""
-    TOKEN = "token"
-    GIST_ID = "gistId"
-    GIST_ETAG = "gistEtag"
-    GIST_FILE = "gistFile"
-    LYRIC = "lyric"
-    PREFERENCES = "preferences"
-
-
-class SessionKey:
-    """Keys for session-scoped in-memory storage."""
-    AUDIO_SRC = "audioSrc"
-    EDITOR_DETAILS_OPEN = "editorDetailsOpen"
-    SYNC_MODE = "syncMode"
-    SELECT_INDEX = "selectIndex"
-    RATELIMIT = "ratelimit"
-
-
-class ActionType(IntEnum):
-    """Action types for the LRC state reducer."""
-    PARSE = 0
-    REFRESH = 1
-    NEXT = 2
-    TIME = 3
-    INFO = 4
-    SELECT = 5
-    DELETE_TIME = 6
-    GET_STATE = 7
 
 
 class InputAction(StrEnum):
@@ -96,13 +65,6 @@ PLAY_MODE_ORDER = [
     PlayMode.SINGLE_LOOP,
     PlayMode.SHUFFLE,
 ]
-
-
-class AudioStateType(IntEnum):
-    """Types of audio state changes."""
-    PAUSE = 0
-    GET_DURATION = 1
-    RATE_CHANGE = 2
 
 
 class SyncMode(IntEnum):
