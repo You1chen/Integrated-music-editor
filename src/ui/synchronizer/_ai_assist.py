@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
 from collections import defaultdict
@@ -13,6 +14,61 @@ from typing import TYPE_CHECKING
 def _extract_base_url(api_url: str) -> str:
     """Strip ``/v1/chat/completions`` or ``/chat/completions`` from an API URL."""
     return re.sub(r"/(v1/)?chat/completions/?$", "", api_url)
+
+
+def _models_base_urls(api_url: str) -> list[str]:
+    """Candidate base URLs for ``/models``: keep the version prefix first, then drop it."""
+    trimmed = api_url.strip()
+    keep_version = re.sub(r"/chat/completions/?$", "", trimmed).rstrip("/")
+    drop_version = _extract_base_url(trimmed).rstrip("/")
+
+    candidates: list[str] = []
+    for candidate in (keep_version, drop_version):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+_MAX_MODEL_ENTRIES = 500
+
+
+def fetch_model_ids(api_key: str, api_url: str, timeout: float = 20.0) -> list[str]:
+    """Fetch available model ids from an OpenAI-compatible ``/models`` endpoint.
+
+    Returns a sorted, de-duplicated list; raises when every candidate URL fails.
+    """
+    ids: list[str] = []
+    last_error: Exception | None = None
+    answered = False
+
+    for base_url in _models_base_urls(api_url):
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=timeout,
+            )
+            seen: set[str] = set()
+            for item in client.models.list():
+                model_id = getattr(item, "id", None)
+                if not model_id or model_id in seen:
+                    continue
+                seen.add(model_id)
+                ids.append(model_id)
+                if len(ids) >= _MAX_MODEL_ENTRIES:
+                    break
+        except Exception as e:
+            last_error = e
+            ids = []
+            continue
+        answered = True
+        if ids:
+            break
+
+    if not ids and last_error is not None and not answered:
+        raise last_error
+    ids.sort()
+    return ids
 
 
 from PyQt6.QtCore import QThread as _QThread, pyqtSignal as _pyqtSignal
@@ -56,15 +112,39 @@ class _ApiWorker(_QThread):
         except Exception as e:
             self.result_ready.emit(False, str(e))
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
+
+class _ModelListWorker(_QThread):
+    """QThread-based model-list fetcher; payload is ``list[str]`` or an error text."""
+    result_ready = _pyqtSignal(bool, object)
+
+    def __init__(self, api_key: str, api_url: str,
+                 timeout: float = 20.0, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._api_url = api_url
+        self._timeout = timeout
+
+    def run(self) -> None:
+        try:
+            ids = fetch_model_ids(self._api_key, self._api_url, self._timeout)
+            if not ids:
+                self.result_ready.emit(False, "接口未返回任何模型")
+                return
+            self.result_ready.emit(True, ids)
+        except Exception as e:
+            self.result_ready.emit(False, str(e))
+
+from PyQt6.QtCore import QPoint, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QCompleter,
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -109,6 +189,201 @@ def build_prompt_text(sync_page: "SynchronizerPage") -> tuple[str, int] | None:
         "注意：只输出翻译，不要附带原文；作者歌手这些也要翻译，无时间戳的行不翻译；确保翻译符合上下文逻辑。"
     )
     return prompt, len(lines)
+
+
+_MODEL_INPUT_H = 40
+
+
+class _ModelPicker(QWidget):
+    """Model-name field whose ▾ button fetches the API's model list into a menu."""
+
+    status_message = _pyqtSignal(str, bool)
+    model_picked = _pyqtSignal(str)
+
+    FETCH_TIMEOUT = 20.0
+    WATCHDOG_MS = 25000
+
+    def __init__(self, config, endpoint_provider, parent=None):
+        """``endpoint_provider()`` returns the current ``(api_url, api_key)``."""
+        super().__init__(parent)
+        self._config = config
+        self._endpoint_provider = endpoint_provider
+        self._cache: dict[str, list[str]] = {}
+        self._req = 0
+        self._watchdog: QTimer | None = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self._edit = QLineEdit(self)
+        self._edit.setPlaceholderText("deepseek-chat")
+        self._edit.setFont(QFont("Consolas", 11))
+        self._edit.setFixedHeight(_MODEL_INPUT_H)
+        layout.addWidget(self._edit, stretch=1)
+
+        self._button = QPushButton("▾", self)
+        self._button.setFixedSize(36, _MODEL_INPUT_H)
+        self._button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._button.setToolTip("从 API 获取模型列表，点开选择一个")
+        self._button.setStyleSheet(
+            "QPushButton {"
+            "  font-size: 14px; border: 1px solid #666; border-radius: 4px;"
+            "  color: #aaa;"
+            "}"
+            "QPushButton:hover { border-color: #58a6ff; color: #58a6ff; }"
+            "QPushButton:disabled { color: #555; border-color: #444; }"
+        )
+        self._button.clicked.connect(self._on_button_clicked)
+        layout.addWidget(self._button)
+
+    # ---- public API ----
+
+    def text(self) -> str:
+        return self._edit.text()
+
+    def setText(self, text: str) -> None:
+        self._edit.setText(text)
+
+    def refresh_suggestions(self) -> None:
+        """Apply remembered models as autocomplete without hitting the network."""
+        models = self._cached_models()
+        if models:
+            self._apply_completer(models)
+
+    def load_models(self, force: bool = False) -> None:
+        """Open the model menu; fetch it first when nothing is remembered yet."""
+        api_url, api_key = self._endpoint_provider()
+        if not api_url or not api_key:
+            self.status_message.emit(
+                "请先填写 API URL 和 API Key，再获取模型列表", True
+            )
+            return
+
+        if not force:
+            cached = self._cached_models()
+            if cached:
+                self._apply_completer(cached)
+                self._popup(cached)
+                return
+
+        self._req += 1
+        req_id = self._req
+        cache_key = self._cache_key(api_url, api_key)
+        self._button.setEnabled(False)
+        self._button.setText("…")
+
+        worker = _ModelListWorker(
+            api_key=api_key, api_url=api_url,
+            timeout=self.FETCH_TIMEOUT, parent=self,
+        )
+        worker.result_ready.connect(
+            lambda ok, payload: self._on_models(ok, payload, cache_key, req_id)
+        )
+        worker.start()
+
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.timeout.connect(
+            lambda: self._on_models(
+                False, "请求超时（25 秒无响应）", cache_key, req_id,
+            )
+        )
+        watchdog.start(self.WATCHDOG_MS)
+        self._watchdog = watchdog
+
+    # ---- internals ----
+
+    def _cache_key(self, api_url: str, api_key: str) -> str:
+        digest = hashlib.sha1(
+            f"{_extract_base_url(api_url)}\n{api_key}".encode("utf-8")
+        ).hexdigest()
+        return digest[:16]
+
+    def _cached_models(self) -> list[str]:
+        api_url, api_key = self._endpoint_provider()
+        if not api_url or not api_key:
+            return []
+        key = self._cache_key(api_url, api_key)
+        models = self._cache.get(key)
+        if models is None:
+            models = self._config.get_model_cache(key)
+            if models:
+                self._cache[key] = models
+        return models
+
+    def _apply_completer(self, models: list[str]) -> None:
+        completer = QCompleter(models, self._edit)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setMaxVisibleItems(12)
+        self._edit.setCompleter(completer)
+
+    def _pick(self, model_id: str) -> None:
+        self._edit.setText(model_id)
+        self.model_picked.emit(model_id)
+
+    def _popup(self, models: list[str]) -> None:
+        menu = build_model_menu(
+            models, self, self._pick, lambda: self.load_models(force=True),
+        )
+        menu.popup(self._button.mapToGlobal(QPoint(0, self._button.height())))
+
+    def _on_button_clicked(self) -> None:
+        self.load_models()
+
+    def _on_models(
+        self, ok: bool, payload: object, cache_key: str, req_id: int,
+    ) -> None:
+        if req_id != self._req:
+            return
+        if self._watchdog is not None:
+            self._watchdog.stop()
+            self._watchdog = None
+        self._button.setEnabled(True)
+        self._button.setText("▾")
+
+        if not ok:
+            self.status_message.emit(f"获取模型列表失败：{payload}", True)
+            return
+
+        models = [m for m in payload if isinstance(m, str)]  # type: ignore[union-attr]
+        if not models:
+            self.status_message.emit("获取模型列表失败：接口未返回任何模型", True)
+            return
+        self._cache[cache_key] = models
+        self._config.set_model_cache(cache_key, models)
+        self._apply_completer(models)
+        self.status_message.emit(f"已获取 {len(models)} 个模型，点 ▾ 选择", False)
+        self._popup(models)
+
+
+def build_model_menu(
+    models: list[str],
+    parent: QWidget,
+    on_pick,
+    on_refresh=None,
+) -> QMenu:
+    """Build the popup model menu; picking an entry calls ``on_pick(model_id)``."""
+    menu = QMenu(parent)
+    menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+
+    if not models:
+        empty = menu.addAction("（没有可选的模型）")
+        empty.setEnabled(False)
+    for model_id in models:
+        action = menu.addAction(model_id)
+        action.triggered.connect(
+            lambda checked=False, m=model_id: on_pick(m)
+        )
+
+    menu.addSeparator()
+    refresh = menu.addAction("🔄  重新获取模型列表")
+    if on_refresh is None:
+        refresh.setEnabled(False)
+    else:
+        refresh.triggered.connect(lambda: on_refresh())
+    return menu
 
 
 def show_ai_assist_dialog(
@@ -673,7 +948,7 @@ def show_ai_assist_dialog(
         INPUT_H = 40
         LABEL_W = 80
 
-        def _row(label_text: str, input_widget: QLineEdit) -> QHBoxLayout:
+        def _row(label_text: str, input_widget: QWidget) -> QHBoxLayout:
             lbl = QLabel(label_text)
             lbl.setFixedSize(LABEL_W, INPUT_H)
             lbl.setStyleSheet("font-size: 13px;")
@@ -703,11 +978,11 @@ def show_ai_assist_dialog(
         key_input.setFixedHeight(INPUT_H)
         outer.addLayout(_row("API Key", key_input))
 
-        model_input = QLineEdit()
-        model_input.setPlaceholderText("deepseek-chat")
-        model_input.setFont(QFont("Consolas", 11))
-        model_input.setFixedHeight(INPUT_H)
-        outer.addLayout(_row("Model", model_input))
+        model_field = _ModelPicker(
+            mw.config,
+            lambda: (url_input.text().strip(), key_input.text().strip()),
+        )
+        outer.addLayout(_row("Model", model_field))
 
         if edit_index is not None:
             configs = mw.config.get_api_configs()
@@ -716,7 +991,8 @@ def show_ai_assist_dialog(
                 name_input.setText(cfg.get("name", ""))
                 url_input.setText(cfg.get("url", ""))
                 key_input.setText(cfg.get("api_key", ""))
-                model_input.setText(cfg.get("model", ""))
+                model_field.setText(cfg.get("model", ""))
+                model_field.refresh_suggestions()
 
         outer.addStretch()
 
@@ -730,6 +1006,8 @@ def show_ai_assist_dialog(
             color = "#f85149" if is_error else "#3fb950"
             feedback.setText(f"<span style='color:{color}'>{text}</span>")
             feedback.show()
+
+        model_field.status_message.connect(_show_feedback)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -765,7 +1043,7 @@ def show_ai_assist_dialog(
             name = name_input.text().strip()
             u = url_input.text().strip()
             k = key_input.text().strip()
-            m = model_input.text().strip()
+            m = model_field.text().strip()
             if not name or not u or not k or not m:
                 _show_feedback("请填写完整的名称、URL、Key 和 Model", True)
                 return

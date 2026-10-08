@@ -308,6 +308,31 @@ class ConfigManager:
         """Return True when at least one API config is saved."""
         return len(self.get_api_configs()) > 0
 
+    MAX_MODEL_CACHE_ENTRIES = 20
+
+    def get_model_cache(self, key: str) -> "list[str]":
+        """Return the remembered model ids fetched for *key* (empty when unknown)."""
+        cache = self._load_config().get("apiModelCache")
+        if not isinstance(cache, dict):
+            return []
+        entry = cache.get(key)
+        if not isinstance(entry, list):
+            return []
+        return [m for m in entry if isinstance(m, str)]
+
+    def set_model_cache(self, key: str, models: "list[str]") -> None:
+        """Remember fetched model ids for *key*, keeping only the newest entries."""
+        cfg = self._load_config()
+        cache = cfg.get("apiModelCache")
+        if not isinstance(cache, dict):
+            cache = {}
+        cache.pop(key, None)
+        cache[key] = [m for m in models if isinstance(m, str)]
+        while len(cache) > self.MAX_MODEL_CACHE_ENTRIES:
+            cache.pop(next(iter(cache)))
+        cfg["apiModelCache"] = cache
+        self._save_config()
+
     def get_playlist_cache(self) -> "dict[str, Any]":
         """Read the playlist cache JSON (scan results + likes)."""
         try:
