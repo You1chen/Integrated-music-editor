@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..core.lrc_parser import parse as parse_lrc
 from .content_stack import _CURRENT_THEME_COLOR, _CURRENT_DARK, _rgba
 
 if TYPE_CHECKING:
@@ -86,6 +87,7 @@ class _ScanWorker(QThread):
                         song = dict(cached)
                         stem = os.path.splitext(full_path)[0]
                         song["has_lrc"] = os.path.isfile(stem + ".lrc")
+                        song["unfinished"] = lrc_maybe_unfinished(stem + ".lrc")
                         songs.append(song)
                         seen.add(key)
                         continue
@@ -167,6 +169,7 @@ class _ScanWorker(QThread):
                         "comment": comment,
                         "duration": duration,
                         "has_lrc": has_lrc,
+                        "unfinished": lrc_maybe_unfinished(stem + ".lrc"),
                         "liked": False,
                         "mtime_ns": st.st_mtime_ns,
                         "size": st.st_size,
@@ -190,6 +193,45 @@ class _ScanWorker(QThread):
 def _norm_path(p: str) -> str:
     """Normalize a path for use as a dict key (Windows case-insensitive)."""
     return os.path.normcase(os.path.normpath(p))
+
+
+_ZERO_TIME_EPS = 0.0005
+_EMPTY_HINT = "请选择一个音乐文件夹开始扫描"
+
+
+def lrc_maybe_unfinished(lrc_path: str) -> bool:
+    """Return True when the LRC's last lyric line is stamped at 0s or has no stamp.
+
+    Rows and folders only insert new lines with a zero (or inherited) timestamp,
+    so a tail of ``[00:00.000]`` lines — or trailing lines without any time tag —
+    means the synchronization stopped somewhere in the middle.
+    """
+    try:
+        with open(lrc_path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+
+    for line in reversed(parse_lrc(text).lyric):
+        if not line.text.strip():
+            continue
+        return line.time is None or line.time < _ZERO_TIME_EPS
+    return False
+
+
+def song_maybe_unfinished(song: dict) -> bool:
+    """Judge a playlist entry by its same-stem ``.lrc`` file."""
+    path = song.get("path") or ""
+    if not path:
+        return False
+    return lrc_maybe_unfinished(os.path.splitext(path)[0] + ".lrc")
+
+
+def _ensure_unfinished_flags(songs: list[dict]) -> None:
+    """Backfill ``unfinished`` for caches written before the flag existed."""
+    for song in songs:
+        if "unfinished" not in song:
+            song["unfinished"] = song_maybe_unfinished(song)
 
 
 def _first(lst) -> str:
@@ -379,8 +421,16 @@ class _SongRow(QWidget):
         artist_str = f" — {s['artist']}" if s["artist"] else ""
         self._title_label.setText(f"{s['title']}{artist_str}")
 
-        self._lrc_label.setText("📝" if s.get("has_lrc") else "")
-        self._lrc_label.setVisible(bool(s.get("has_lrc")))
+        has_lrc = bool(s.get("has_lrc"))
+        if has_lrc and s.get("unfinished"):
+            self._lrc_label.setText("📝⚠")
+            self._lrc_label.setToolTip(
+                "同名歌词最后一行时间戳为 0（或缺失），可能未完成"
+            )
+        else:
+            self._lrc_label.setText("📝" if has_lrc else "")
+            self._lrc_label.setToolTip("存在同名歌词文件")
+        self._lrc_label.setVisible(has_lrc)
 
         dur = s.get("duration", 0)
         if dur > 0:
@@ -397,9 +447,12 @@ class _SongRow(QWidget):
         self._refresh_labels()
         self._refresh_like_btn()
 
-    def matches(self, text: str, liked_only: bool = False) -> bool:
-        """Return True if this song matches the search text and liked-only filter."""
+    def matches(self, text: str, liked_only: bool = False,
+                unfinished_only: bool = False) -> bool:
+        """Return True if this song matches the search text and active filters."""
         if liked_only and not self._liked:
+            return False
+        if unfinished_only and not self._song.get("unfinished"):
             return False
         if not text:
             return True
@@ -530,16 +583,17 @@ class _TreeBranch(QWidget):
         return result
 
     def apply_filter(self, text: str, liked_only: bool = False,
+                      unfinished_only: bool = False,
                       expand_matches: bool = False) -> bool:
         """Show/hide this subtree by filter, expanding matches; True if visible."""
         any_visible = False
         for row in self._song_rows:
-            v = row.matches(text, liked_only)
+            v = row.matches(text, liked_only, unfinished_only)
             row.setVisible(v)
             if v:
                 any_visible = True
         for b in self._branches:
-            if b.apply_filter(text, liked_only, expand_matches):
+            if b.apply_filter(text, liked_only, unfinished_only, expand_matches):
                 any_visible = True
         if expand_matches and any_visible:
             self._set_expanded(True)
@@ -561,6 +615,7 @@ class PlaylistPage(QScrollArea):
         self._branches: list[_TreeBranch] = []
         self._filter_text: str = ""
         self._show_liked_only: bool = False
+        self._show_unfinished_only: bool = False
         self._saved_expanded: dict[str, bool] | None = None
         self._search_timer: QTimer | None = None
         self._root_dir: str = ""
@@ -589,6 +644,15 @@ class PlaylistPage(QScrollArea):
         self._btn_liked.toggled.connect(self._on_liked_filter_toggled)
         toolbar.addWidget(self._btn_liked)
 
+        self._btn_unfinished = QPushButton("⚠ 可能未完成")
+        self._btn_unfinished.setCheckable(True)
+        self._btn_unfinished.setToolTip(
+            "仅显示最后一行歌词时间戳为 0（或没有时间戳）的歌曲，"
+            "常见于只打了一部分轴的文件"
+        )
+        self._btn_unfinished.toggled.connect(self._on_unfinished_filter_toggled)
+        toolbar.addWidget(self._btn_unfinished)
+
         toolbar.addStretch()
 
         self._search_input = QLineEdit()
@@ -604,7 +668,7 @@ class PlaylistPage(QScrollArea):
         self._content_layout.setSpacing(2)
         self._layout.addLayout(self._content_layout)
 
-        self._empty_label = QLabel("请选择一个音乐文件夹开始扫描")
+        self._empty_label = QLabel(_EMPTY_HINT)
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setStyleSheet(
             "font-size: 16px; color: gray; padding: 60px 0;"
@@ -614,12 +678,14 @@ class PlaylistPage(QScrollArea):
         self._layout.addStretch()
 
         self._load_cache()
+        self._refresh_unfinished_btn()
 
     def _load_cache(self) -> None:
         cache = self._mw.config.get_playlist_cache()
         songs = cache.get("songs", [])
         self._root_dir = _migrate_root_dir(cache)
         if songs and self._root_dir and os.path.isdir(self._root_dir):
+            _ensure_unfinished_flags(songs)
             self._all_songs = songs
             self._rebuild_ui()
         else:
@@ -729,6 +795,8 @@ class PlaylistPage(QScrollArea):
             branch.deleteLater()
         self._branches.clear()
 
+        self._refresh_unfinished_btn()
+
         if not self._all_songs:
             self._empty_label.setVisible(True)
             return
@@ -748,7 +816,8 @@ class PlaylistPage(QScrollArea):
         for branch in root_branch.collect_branches():
             branch.import_requested.connect(self._on_import_requested)
 
-        if self._filter_text or self._show_liked_only:
+        if (self._filter_text or self._show_liked_only
+                or self._show_unfinished_only):
             self._do_apply_filter()
 
     def _on_song_clicked(self, path: str) -> None:
@@ -794,6 +863,32 @@ class PlaylistPage(QScrollArea):
     def get_all_songs(self) -> list[dict]:
         """Return all scanned songs (shallow copy) in natural order."""
         return [dict(s) for s in self._all_songs]
+
+    def open_song(self, path: str) -> None:
+        """Load *path* into the player (same behaviour as clicking its row)."""
+        self._on_song_clicked(path)
+
+    def refresh_unfinished_flags(self) -> int:
+        """Re-check every song's ``.lrc`` and return the possibly-unfinished count."""
+        changed = False
+        for song in self._all_songs:
+            flag = song_maybe_unfinished(song)
+            if song.get("unfinished") != flag:
+                song["unfinished"] = flag
+                changed = True
+        if changed:
+            for branch in self._branches:
+                for row in branch.collect_rows():
+                    row.update_song(row._song)
+        self._refresh_unfinished_btn()
+        self._do_apply_filter()
+        return self._unfinished_count()
+
+    def get_unfinished_songs(self, refresh: bool = True) -> list[dict]:
+        """Return songs whose lyrics look unfinished, re-checking files first."""
+        if refresh:
+            self.refresh_unfinished_flags()
+        return [dict(s) for s in self._all_songs if s.get("unfinished")]
 
     def get_folder_tree(self):
         """Return the directory tree root (``_TreeNode``) or None if empty."""
@@ -918,6 +1013,7 @@ class PlaylistPage(QScrollArea):
 
         stem = os.path.splitext(actual)[0]
         has_lrc = os.path.isfile(stem + ".lrc")
+        unfinished = lrc_maybe_unfinished(stem + ".lrc")
 
         try:
             st = os.stat(actual)
@@ -942,6 +1038,7 @@ class PlaylistPage(QScrollArea):
                 song["comment"] = comment
                 song["duration"] = duration
                 song["has_lrc"] = has_lrc
+                song["unfinished"] = unfinished
                 song["mtime_ns"] = mtime_ns
                 song["size"] = size
                 updated_song = song
@@ -962,6 +1059,7 @@ class PlaylistPage(QScrollArea):
                 s["comment"] = comment
                 s["duration"] = duration
                 s["has_lrc"] = has_lrc
+                s["unfinished"] = unfinished
                 s["mtime_ns"] = mtime_ns
                 s["size"] = size
                 break
@@ -969,10 +1067,18 @@ class PlaylistPage(QScrollArea):
 
         if updated_song is not None:
             for branch in self._branches:
+                matched = False
                 for row in branch.collect_rows():
                     if os.path.normpath(row._song["path"]) == os.path.normpath(old_path):
                         row.update_song(updated_song)
-                        return
+                        matched = True
+                        break
+                if matched:
+                    break
+
+        self._refresh_unfinished_btn()
+        if self._show_unfinished_only:
+            self._do_apply_filter()
 
     def _on_search_text_changed(self, text: str) -> None:
         if self._search_timer is not None:
@@ -995,29 +1101,62 @@ class PlaylistPage(QScrollArea):
             self._btn_liked.setText("♡ 喜欢")
         self._do_apply_filter()
 
+    def _on_unfinished_filter_toggled(self, checked: bool) -> None:
+        """Toggle the「可能未完成」filter, re-checking the .lrc files first."""
+        self._show_unfinished_only = checked
+        self.refresh_unfinished_flags()
+
+    def _unfinished_count(self) -> int:
+        """Number of library songs flagged as possibly unfinished."""
+        return sum(1 for s in self._all_songs if s.get("unfinished"))
+
+    def _refresh_unfinished_btn(self) -> None:
+        """Keep the count in the「可能未完成」button in sync with the library."""
+        self._btn_unfinished.setText(f"⚠ 可能未完成 ({self._unfinished_count()})")
+
     def _do_apply_filter(self) -> None:
-        """Apply the text search and liked-only filter to every branch."""
-        active = bool(self._filter_text) or self._show_liked_only
+        """Apply the text search and every active filter to all branches."""
+        active = (
+            bool(self._filter_text)
+            or self._show_liked_only
+            or self._show_unfinished_only
+        )
 
         if active and self._saved_expanded is None:
             self._saved_expanded = {}
             for branch in self._branches:
                 self._saved_expanded.update(branch.snapshot_expanded())
 
+        any_visible = False
         for branch in self._branches:
-            branch.apply_filter(self._filter_text, self._show_liked_only,
-                                expand_matches=active)
+            if branch.apply_filter(
+                self._filter_text,
+                self._show_liked_only,
+                self._show_unfinished_only,
+                expand_matches=active,
+            ):
+                any_visible = True
 
         if not active and self._saved_expanded is not None:
             for branch in self._branches:
                 branch.restore_expanded(self._saved_expanded)
             self._saved_expanded = None
 
+        if not self._all_songs:
+            return
+        if any_visible:
+            self._empty_label.setText(_EMPTY_HINT)
+            self._empty_label.setVisible(False)
+        else:
+            self._empty_label.setText("没有符合条件的歌曲")
+            self._empty_label.setVisible(True)
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         cache = self._mw.config.get_playlist_cache()
         songs = cache.get("songs", [])
         if songs and not self._all_songs:
+            _ensure_unfinished_flags(songs)
             self._all_songs = songs
             self._root_dir = _migrate_root_dir(cache)
             self._rebuild_ui()

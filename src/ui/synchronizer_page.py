@@ -160,6 +160,14 @@ class SynchronizerPage(QWidget):
         self._btn_save.clicked.connect(self._on_save)
         toolbar.addWidget(self._btn_save)
 
+        self._btn_unfinished = QPushButton("⚠ 可能未完成")
+        self._btn_unfinished.setToolTip(
+            "列出媒体库里最后一行歌词时间戳为 0（或没有时间戳）的歌曲，"
+            "选中即载入继续打轴"
+        )
+        self._btn_unfinished.clicked.connect(self._on_show_unfinished)
+        toolbar.addWidget(self._btn_unfinished)
+
         toolbar.addStretch()
 
         return toolbar
@@ -566,6 +574,88 @@ class SynchronizerPage(QWidget):
             self._notify_playlist()
         else:
             QMessageBox.warning(self, "错误", msg)
+
+    def _on_show_unfinished(self) -> None:
+        """List lyrics whose last line is stamped at 0 and load the picked song."""
+        from ..core.constants import PageRoute
+
+        page = self._mw.content_stack._pages.get(PageRoute.PLAYLIST)
+        if page is None or not page.get_all_songs():
+            self._mw.toast_overlay.show_toast(
+                "warning", "歌单为空，请先在「歌单」页扫描文件夹"
+            )
+            return
+
+        songs = page.get_unfinished_songs()
+        if not songs:
+            self._mw.toast_overlay.show_toast(
+                "success", "没有发现可能未完成的歌词"
+            )
+            return
+
+        path = self._pick_unfinished_song(songs)
+        if not path:
+            return
+        page.open_song(path)
+        self._mw.toast_overlay.show_toast(
+            "success", f"已载入：{os.path.basename(path)}"
+        )
+
+    def _pick_unfinished_song(self, songs: list[dict]) -> str:
+        """Show the「可能未完成」song list; return the picked path or ''."""
+        from PyQt6.QtWidgets import QDialogButtonBox, QListWidget, QListWidgetItem
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("可能未完成的歌词")
+        dialog.resize(560, 460)
+
+        dlg_layout = QVBoxLayout(dialog)
+        dlg_layout.setContentsMargins(20, 18, 20, 16)
+        dlg_layout.setSpacing(10)
+
+        head = QLabel(
+            f"共 {len(songs)} 首歌词的最后一行时间戳为 0（或没有时间戳），"
+            "可能只打了一部分轴"
+        )
+        head.setWordWrap(True)
+        dlg_layout.addWidget(head)
+
+        listing = QListWidget()
+        for song in songs:
+            path = song.get("path", "")
+            title = song.get("title") or os.path.basename(path)
+            artist = song.get("artist") or ""
+            item = QListWidgetItem(f"{title} — {artist}" if artist else title)
+            item.setToolTip(f"{path}\n目录：{os.path.dirname(path)}")
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            listing.addItem(item)
+        dlg_layout.addWidget(listing, stretch=1)
+
+        hint = QLabel("双击条目或按「载入」，把这首歌载入打轴页继续")
+        hint.setStyleSheet("color: gray; font-size: 12px;")
+        dlg_layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("载入")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dlg_layout.addWidget(buttons)
+
+        listing.itemDoubleClicked.connect(lambda _item: dialog.accept())
+        if listing.count() > 0:
+            listing.setCurrentRow(0)
+
+        was_playing = self._pause_for_edit()
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        item = listing.currentItem()
+        if not accepted or item is None:
+            self._resume_after_edit(was_playing)
+            return ""
+        return str(item.data(Qt.ItemDataRole.UserRole) or "")
 
     def _notify_playlist(self) -> None:
         """Refresh the playlist's 📝 indicator for this song."""
