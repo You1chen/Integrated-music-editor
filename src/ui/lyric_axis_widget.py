@@ -204,7 +204,7 @@ class LyricAxisWidget(QScrollArea):
         self._mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._mode_btn.clicked.connect(self._cycle_mode)
 
-        self._mw.lrc_state.state_changed.connect(self._rebuild)
+        self._mw.lrc_state.document_changed.connect(self._rebuild)
         self._mw.audio_manager.current_time_changed.connect(self._on_time)
         theme_events.changed.connect(self._on_theme_changed)
 
@@ -316,14 +316,14 @@ class LyricAxisWidget(QScrollArea):
 
     def _on_time(self, audio_time: float) -> None:
         idx = self._find_index(audio_time)
-        if idx < 0 or idx >= len(self._items):
-            return
         if idx == self._current_idx:
             return
 
         if 0 <= self._current_idx < len(self._items):
             self._items[self._current_idx].set_active(False)
         self._current_idx = idx
+        if idx < 0 or idx >= len(self._items):
+            return
         self._items[idx].set_active(True)
 
         self._scroll_to_item(idx)

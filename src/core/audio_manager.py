@@ -69,6 +69,14 @@ class AudioManager(QObject):
     state_changed = pyqtSignal(AudioStateData)
     error_occurred = pyqtSignal(str)
     duration_changed = pyqtSignal(float)
+    # Emitted once the current source has reached LoadedMedia.  Unlike
+    # durationChanged, this is a readiness notification and is not emitted
+    # for the transient zero-duration reset some backends produce while a
+    # source is being replaced.
+    media_loaded = pyqtSignal()
+    # Lets queue owners cancel a pending operation when another component
+    # replaces the source directly (drag/drop, startup restore, etc.).
+    source_changed = pyqtSignal(str)
     meta_data_changed = pyqtSignal()
     media_ended = pyqtSignal()
 
@@ -205,9 +213,22 @@ class AudioManager(QObject):
         return new_time
 
     def set_source(self, url: str) -> None:
-        """Set the audio source URL."""
-        qurl = QUrl(url)
-        self._player.setSource(qurl)
+        """Set the source and notify consumers before loading or replaying it."""
+        # Notify queue owners before QMediaPlayer starts emitting asynchronous
+        # status/duration signals.  This lets them cancel a pending autoplay
+        # for the source that has just been replaced.
+        self.source_changed.emit(url)
+        source = QUrl(url)
+        if source == self._player.source() and self._player.mediaStatus() in (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+            QMediaPlayer.MediaStatus.EndOfMedia,
+        ):
+            self._player.pause()
+            self._player.setPosition(0)
+            self.media_loaded.emit()
+            return
+        self._player.setSource(source)
 
     @property
     def cover_image(self):
@@ -248,8 +269,10 @@ class AudioManager(QObject):
         ))
 
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
-        """Emit ``media_ended`` when the current track finishes naturally."""
-        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+        """Forward source readiness and natural end-of-media notifications."""
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            self.media_loaded.emit()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
             self.media_ended.emit()
 
     def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:

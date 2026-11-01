@@ -96,6 +96,8 @@ class AudioControls(QWidget):
         self._mw.playlist.current_changed.connect(self._refresh_like_state)
         self._mw.playlist.queue_changed.connect(self._refresh_like_state)
         self._mw.liked_changed.connect(self._on_liked_changed)
+        self._mw.preferences_changed.connect(self._apply_preferences)
+        self._apply_preferences(self._mw.config.get_preferences())
 
         self._duration = self._mw.audio_manager.duration
         self._rate = self._mw.audio_manager.playback_rate
@@ -298,6 +300,11 @@ class AudioControls(QWidget):
         elif data.type == AudioState.RATE_CHANGED:
             self._rate = data.payload
             self._rate_btn.setText(f"×{self._rate:.2f}")
+
+    def _apply_preferences(self, prefs: dict) -> None:
+        """Keep every player bar in sync with preference changes."""
+        self.set_fixed(prefs.get("fixed", 3))
+        self.set_waveform_visible(prefs.get("showWaveform", True))
 
     def set_waveform_visible(self, visible: bool) -> None:
         """Show/hide waveform widget."""

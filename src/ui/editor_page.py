@@ -93,7 +93,8 @@ class EditorPage(QWidget):
         self.text_edit.installEventFilter(self)
         layout.addWidget(self.text_edit, stretch=1)
 
-        self._mw.lrc_state.state_changed.connect(self._update_from_state)
+        self._mw.lrc_state.document_changed.connect(self._update_from_state)
+        self._mw.lrc_state.format_changed.connect(self._update_from_state)
         self._suppress_update = False
 
         self._update_from_state()

@@ -51,11 +51,15 @@ class _TranslationRow(QFrame):
         self._trans_edit = QLineEdit()
         self._trans_edit.setPlaceholderText("输入翻译…")
         self._trans_edit.setText(line.translation)
-        self._trans_edit.textChanged.connect(self._on_text_changed)
+        self._trans_edit.textEdited.connect(self._on_text_changed)
         self._trans_edit.editingFinished.connect(self._on_editing_finished)
         layout.addWidget(self._trans_edit, stretch=1)
 
         self._restyle()
+
+    @property
+    def translation_text(self) -> str:
+        return self._trans_edit.text()
 
     @property
     def lyric_index(self) -> int:

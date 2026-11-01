@@ -76,12 +76,6 @@ def main() -> None:
         audio_controls.on_current_time_changed
     )
 
-    window.lrc_state.state_changed.connect(
-        lambda: audio_controls.set_fixed(
-            window.config.get_preferences().get("fixed", 3)
-        )
-    )
-
     window.show()
 
     sys.exit(app.exec())

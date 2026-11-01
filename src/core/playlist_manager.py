@@ -34,8 +34,12 @@ class PlaylistManager(QObject):
         self._current_index: int = -1
         self._mode: PlayMode = PlayMode.SINGLE
         self._autoplay_connected = False
+        self._autoplay_path = ""
 
         self._am.media_ended.connect(self._on_media_ended)
+        self._am.media_loaded.connect(self._on_media_loaded)
+        self._am.source_changed.connect(self._on_source_changed)
+        self._am.error_occurred.connect(self._cancel_autoplay)
         self._load()
 
     @property
@@ -80,6 +84,7 @@ class PlaylistManager(QObject):
 
     def set_queue(self, songs: list[dict]) -> None:
         """Replace the whole queue (no auto-play)."""
+        self._cancel_autoplay()
         self._queue = [self._entry(s) for s in songs if s.get("path")]
         self._current_index = -1
         self._emit_all()
@@ -90,6 +95,7 @@ class PlaylistManager(QObject):
         self._emit_all()
 
     def clear(self) -> None:
+        self._cancel_autoplay()
         self._queue = []
         self._current_index = -1
         self._emit_all()
@@ -99,6 +105,8 @@ class PlaylistManager(QObject):
         n = len(self._queue)
         if not (0 <= index < n):
             return
+        if self._autoplay_connected and index == self._current_index:
+            self._cancel_autoplay()
         self._queue.pop(index)
         if index < self._current_index:
             self._current_index -= 1
@@ -128,10 +136,10 @@ class PlaylistManager(QObject):
         if not os.path.isfile(path):
             return
         self._current_index = index
+        self._connect_autoplay(path)
         self._am.set_source(QUrl.fromLocalFile(path).toString())
         if self._config is not None and hasattr(self._config, "remember_mp3_path"):
             self._config.remember_mp3_path(path)
-        self._connect_autoplay()
         self.current_changed.emit(index)
         self._save()
 
@@ -149,17 +157,38 @@ class PlaylistManager(QObject):
             return
         self.play_index((self._current_index - 1) % n)
 
-    def _connect_autoplay(self) -> None:
-        if self._autoplay_connected:
-            return
-        self._am.duration_changed.connect(self._on_autoplay)
+    def _cancel_autoplay(self) -> None:
+        """Cancel a queued autoplay without changing the current media."""
+        self._autoplay_path = ""
+        self._autoplay_connected = False
+
+    def _connect_autoplay(self, path: str) -> None:
+        """Play *path* once the new media reaches LoadedMedia.
+
+        Loading is asynchronous and QMediaPlayer can emit transient duration
+        changes (including zero) while replacing a source.  Waiting for the
+        stable media status avoids starting an old/partly loaded source, while
+        storing the expected path lets direct source changes cancel this one.
+        """
+        self._autoplay_path = _norm_path(path)
         self._autoplay_connected = True
 
-    def _on_autoplay(self, _duration: float) -> None:
-        try:
-            self._am.duration_changed.disconnect(self._on_autoplay)
-        except TypeError:
-            pass
+    def _on_source_changed(self, url: str) -> None:
+        """Cancel a pending queue autoplay when any source is replaced."""
+        new_path = _norm_path(QUrl(url).toLocalFile())
+        if self._autoplay_path and new_path != self._autoplay_path:
+            self._autoplay_path = ""
+            self._autoplay_connected = False
+
+    def _on_media_loaded(self) -> None:
+        """Start only the source for which queue autoplay is pending."""
+        if not self._autoplay_connected or not self._autoplay_path:
+            return
+        if _norm_path(self._am.local_path) != self._autoplay_path:
+            self._autoplay_path = ""
+            self._autoplay_connected = False
+            return
+        self._autoplay_path = ""
         self._autoplay_connected = False
         self._am.play()
 

@@ -111,6 +111,7 @@ class SynchronizerPage(QWidget):
         self._trans_was_playing: bool | None = None
 
         self._mw.lrc_state.state_changed.connect(self._refresh_rows)
+        self._mw.lrc_state.format_changed.connect(self._refresh_rows)
 
         theme_events.changed.connect(self._refresh_rows)
 
@@ -210,17 +211,17 @@ class SynchronizerPage(QWidget):
         self._rebuild_all()
 
     def _on_translation_changed(self, index: int, text: str) -> None:
-        """Live update translation text on each keystroke."""
+        """Pause playback while the user edits a local translation draft."""
         if self._trans_was_playing is None:
             self._trans_was_playing = self._pause_for_edit()
-        state = self._mw.lrc_state
-        if 0 <= index < len(state.lyric):
-            state.lyric[index].translation = text
-        state.state_changed.emit()
+        # Keep the draft in the input widget until editing finishes.
 
     def _on_translation_finished(self, index: int) -> None:
-        """User finished editing — push one undo snapshot and resume playback."""
-        self._mw.lrc_state._push_undo()
+        """Commit the draft through the state manager as one undo step."""
+        if 0 <= index < len(self._trans_rows):
+            self._mw.lrc_state.set_translation(
+                index, self._trans_rows[index].translation_text
+            )
         self._resume_after_edit(bool(self._trans_was_playing))
         self._trans_was_playing = None
 
@@ -570,7 +571,6 @@ class SynchronizerPage(QWidget):
         ok, msg = self._mw.config.overwrite_lrc(text)
         if ok:
             self._mw.toast_overlay.show_toast("success", msg)
-            self._mw.lrc_state.state_changed.emit()
             self._notify_playlist()
         else:
             QMessageBox.warning(self, "错误", msg)
@@ -1077,7 +1077,11 @@ class SynchronizerPage(QWidget):
 
     def _resume_after_edit(self, was_playing: bool) -> None:
         """Resume playback only if the editing session had paused it."""
-        if was_playing and self._mw.audio_manager.paused:
+        if (
+            was_playing
+            and not getattr(self._mw, "_closing", False)
+            and self._mw.audio_manager.paused
+        ):
             self._mw.audio_manager.toggle()
 
     def _on_sync(self) -> None:

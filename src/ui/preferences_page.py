@@ -569,14 +569,12 @@ class PreferencesPage(QScrollArea):
             prefs = self._mw.config.get_preferences()
             prefs["themeMode"] = mode
             self._apply_new_prefs(prefs)
-            self._mw.lrc_state.state_changed.emit()
 
     def _on_color_pick(self, color: str) -> None:
         prefs = self._mw.config.get_preferences()
         prefs["themeColor"] = color
         self._apply_new_prefs(prefs)
         self._update_color_buttons(color)
-        self._mw.lrc_state.state_changed.emit()
 
     def _on_custom_color(self) -> None:
         color = QColorDialog.getColor()
@@ -586,7 +584,6 @@ class PreferencesPage(QScrollArea):
             prefs["themeColor"] = hex_color
             self._apply_new_prefs(prefs)
             self._update_color_buttons(hex_color)
-            self._mw.lrc_state.state_changed.emit()
 
     def _on_toggle_changed(self) -> None:
         self._save_prefs()

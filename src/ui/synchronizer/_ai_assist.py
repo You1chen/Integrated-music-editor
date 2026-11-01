@@ -154,7 +154,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ...core.lrc_parser import Fixed, LyricLine, convert_time_to_tag
+from ...core.lrc_parser import Fixed, convert_time_to_tag
 from ..content_stack import is_dark_theme
 
 if TYPE_CHECKING:
@@ -1134,7 +1134,7 @@ def _generate_and_copy_prompt(
 
 def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
                              overwrite: bool = False) -> None:
-    """Match translations in a background thread, then fill them one by one."""
+    """Match a snapshot in the background and commit translations atomically."""
     state = sync_page._mw.lrc_state
     prefs = sync_page._mw.config.get_preferences()
     fixed: Fixed = prefs.get("fixed", 3)
@@ -1145,6 +1145,7 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
 
     progress = QDialog(sync_page)
     progress.setWindowTitle("模式匹配")
+    progress.setWindowModality(Qt.WindowModality.ApplicationModal)
     progress.setFixedSize(300, 110)
     progress.setWindowFlags(
         Qt.WindowType.Dialog
@@ -1231,6 +1232,7 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
         if not _done[0]:
             return
         _poll_timer.stop()
+        _poll_timer.deleteLater()
 
         if not _matches:
             dots_timer.stop()
@@ -1241,43 +1243,21 @@ def perform_pattern_matching(sync_page: "SynchronizerPage", input_text: str,
             )
             return
 
-        theme_color = prefs.get("themeColor", "#f58ea8")
-        is_dark = is_dark_theme()
-        state._push_undo()
-        _queue = list(_matches)
-        _count = [0]
-
-        def _fill_one() -> None:
-            if not _queue:
-                _fill_timer.stop()
-                dots_timer.stop()
-                progress.accept()
-                progress.deleteLater()
-                state.state_changed.emit()
-                sync_page._mw.toast_overlay.show_toast(
-                    "success", f"成功匹配 {_count[0]} 条翻译"
-                )
-                return
-
-            idx, text = _queue.pop(0)
-            if 0 <= idx < len(state.lyric):
-                state.lyric[idx] = LyricLine(
-                    time=state.lyric[idx].time,
-                    text=state.lyric[idx].text,
-                    translation=text,
-                )
-                _count[0] += 1
-                if idx < len(sync_page._trans_rows):
-                    sync_page._trans_rows[idx].update_state(
-                        line=state.lyric[idx],
-                        theme_color=theme_color,
-                        is_dark=is_dark,
-                    )
-                sync_page._scroll_to_row(idx)
-
-        _fill_timer = QTimer(sync_page)
-        _fill_timer.timeout.connect(_fill_one)
-        _fill_timer.start(0)
+        current_snapshot = [
+            (ln.time, ln.text, ln.translation) for ln in state.lyric
+        ]
+        dots_timer.stop()
+        progress.accept()
+        progress.deleteLater()
+        if current_snapshot != lyric_snapshot:
+            sync_page._mw.toast_overlay.show_toast(
+                "warning", "歌词已变化，本次翻译匹配已取消，请重新匹配"
+            )
+            return
+        count = state.set_translations_batch(dict(_matches))
+        sync_page._mw.toast_overlay.show_toast(
+            "success", f"成功匹配 {count} 条翻译"
+        )
 
     _poll_timer = QTimer(sync_page)
     _poll_timer.timeout.connect(_poll)

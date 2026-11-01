@@ -34,6 +34,7 @@ class MainWindow(QMainWindow):
     """Top-level application window that wires shared state and signals."""
 
     liked_changed = pyqtSignal(str, bool)
+    preferences_changed = pyqtSignal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -228,7 +229,11 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def closeEvent(self, event) -> None:
-        """Handle draft lifecycle on window close."""
+        """Commit focused editors before persisting the final draft."""
+        self._closing = True
+        focused = QApplication.focusWidget()
+        if focused is not None and self.isAncestorOf(focused):
+            focused.clearFocus()
         if self._playlist_panel is not None:
             self._playlist_panel.shutdown()
         waveform = getattr(self.footer_bar.audio_controls, "_waveform", None)
@@ -820,6 +825,7 @@ class MainWindow(QMainWindow):
         """Apply preference changes to all components."""
         self.config.set_preferences(prefs)
         self._apply_format_options(prefs)
+        self.preferences_changed.emit(dict(prefs))
         self._pending_theme = prefs
         self._prefs_debounce.start()
 

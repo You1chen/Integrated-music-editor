@@ -262,7 +262,6 @@ class ExpandEditorDialog(QDialog):
         mw.audio_manager.state_changed.connect(ac.update_state)
         mw.audio_manager.current_time_changed.connect(ac.on_current_time_changed)
         mw.playlist.mode_changed.connect(ac.update_mode_label)
-        mw.lrc_state.state_changed.connect(ac.refresh_fixed)
 
         prefs = mw.config.get_preferences()
         ac.set_waveform_visible(prefs.get("showWaveform", True))
