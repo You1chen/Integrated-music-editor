@@ -84,15 +84,26 @@ class LyricAxisWidget(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setObjectName("cardLyrics")
+        # The viewport is a direct child of QScrollArea, so the app stylesheet's
+        # "QScrollArea > QWidget > QWidget" rule never reaches it and it would
+        # otherwise paint the window colour as an opaque box over the card.
+        self.viewport().setObjectName("cardLyricsViewport")
         self.viewport().setAutoFillBackground(False)
+        self.viewport().setStyleSheet("background: transparent;")
         body = QWidget()
         body.setObjectName("cardLyricsBody")
-        self.setStyleSheet("#cardLyrics, #cardLyricsBody { background: transparent; border: none; }")
+        self.setStyleSheet(
+            "#cardLyrics, #cardLyricsViewport, #cardLyricsBody, #cardLyricsSpacer {"
+            " background: transparent; border: none; }"
+        )
         self._layout = QVBoxLayout(body)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(8)
         self._top = QWidget()
         self._bottom = QWidget()
+        for spacer in (self._top, self._bottom):
+            spacer.setObjectName("cardLyricsSpacer")
+            spacer.setAutoFillBackground(False)
         self._empty = QLabel("暂无同步歌词")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._layout.addWidget(self._top)

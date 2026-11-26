@@ -215,21 +215,25 @@ class HomePage(QWidget):
         self._surface.accent = palette.accent
         self._surface.update()
         self._lyric_axis.set_card_palette(palette)
-        base, text, accent = palette.background.name(), palette.text.name(), palette.accent.name()
+        text, accent = palette.text.name(), palette.accent.name()
         border = mix(palette.background, palette.text, 0.20).name()
+        hover = QColor(palette.accent)
+        hover.setAlpha(46)
+        hover_css = f"rgba({hover.red()},{hover.green()},{hover.blue()},0.18)"
+        # Controls stay transparent so only the card surface provides a background;
+        # a second solid fill would visibly disagree with the card gradient.
         self._cover_btn.setStyleSheet(f"""
             QPushButton#homeCover {{ border: 1px solid {border}; border-radius: 13px;
-                background: {base}; color: {text}; }}
-            QPushButton#homeCover:hover {{ border-color: {accent}; }}
+                background: transparent; color: {text}; }}
+            QPushButton#homeCover:hover {{ border-color: {accent}; background: {hover_css}; }}
         """)
         self._title.setStyleSheet(f"color: {text}; font-size: 22px; font-weight: 700; background: transparent;")
         self._subtitle.setStyleSheet(f"color: {palette.secondary.name()}; font-size: 13px; background: transparent;")
-        hover = mix(palette.background, palette.accent, 0.14).name()
         for button in self._action_buttons:
             button.setStyleSheet(f"""
                 QPushButton {{ border: 1px solid {border}; border-radius: 13px;
-                    padding: 5px 12px; color: {text}; background: {base}; }}
-                QPushButton:hover {{ border-color: {accent}; background: {hover}; }}
+                    padding: 5px 12px; color: {text}; background: transparent; }}
+                QPushButton:hover {{ border-color: {accent}; background: {hover_css}; }}
                 QPushButton:disabled {{ color: {palette.secondary.name()}; }}
             """)
         self._refresh_song_info()
