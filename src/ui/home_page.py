@@ -1,16 +1,17 @@
-"""Music-player home page — cover art plus a scrolling lyrics axis."""
+"""Cover-driven lyrics card for the music-player home page."""
 
 from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QIcon, QPixmap
+from PyQt6.QtCore import QRectF, Qt
+from PyQt6.QtGui import QColor, QFontMetrics, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
+    QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -23,96 +24,221 @@ from mutagen.id3 import APIC, ID3
 
 from .content_stack import get_theme_colors, theme_events
 from .lyric_axis_widget import LyricAxisWidget
+from .lyric_card_style import card_palette, draw_cover, mix, soft_cover
+from .song_info_dialog import _read_tags
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-class HomePage(QWidget):
-    """Music-player landing page: cover art on the left, lyrics axis on the right."""
+class _CardSurface(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.art = QImage()
+        self.base = QColor("#171820")
+        self.accent = QColor("#e3c7e9")
 
-    COVER_MIN = 160
-    COVER_MAX = 420
-    COVER_RADIUS = 12
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        bounds = QRectF(self.rect())
+        outline = QPainterPath()
+        outline.addRoundedRect(bounds, 22, 22)
+        painter.setClipPath(outline)
+        painter.fillRect(bounds, self.base)
+        draw_cover(painter, bounds, self.art)
+        veil = QLinearGradient(bounds.topLeft(), bounds.bottomRight())
+        start = mix(self.base, self.accent, 0.10)
+        start.setAlpha(218)
+        end = QColor(self.base)
+        end.setAlpha(247)
+        veil.setColorAt(0.0, start)
+        veil.setColorAt(0.70, end)
+        painter.fillRect(bounds, veil)
+
+
+class HomePage(QWidget):
+    """Keep the current track and the live lyrics together on one card."""
+
+    _STYLES = {"faithful": "忠实", "soft": "柔和", "vivid": "鲜明", "mono": "单色"}
+    _TONES = {"auto": "自动", "light": "浅色", "dark": "深色"}
 
     def __init__(self, main_window: "MainWindow") -> None:
         super().__init__()
         self._mw = main_window
-
+        self._options = self._mw.config.get_home_card_options()
         self._cover_data: bytes | None = None
-        self._cover_mime: str = ""
+        self._cover_mime = ""
+        self._cover_image = QImage()
+        self._audio_tags: dict[str, str] = {}
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        outer.setContentsMargins(20, 16, 20, 16)
+        self._surface = _CardSurface()
+        outer.addWidget(self._surface)
+        content = QVBoxLayout(self._surface)
+        content.setContentsMargins(22, 14, 22, 20)
+        content.setSpacing(10)
+
+        actions = QHBoxLayout()
+        actions.addStretch()
+        self._mode_btn = QPushButton()
+        self._mode_btn.setToolTip("切换原文、译文与双语")
+        self._appearance_btn = QPushButton("卡片外观")
+        self._appearance_btn.clicked.connect(self._open_appearance)
+        self._share_btn = QPushButton("分享歌词")
+        self._share_btn.clicked.connect(self._open_share)
+        self._action_buttons = (self._mode_btn, self._appearance_btn, self._share_btn)
+        for button in self._action_buttons:
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            actions.addWidget(button)
+        content.addLayout(actions)
 
         row = QHBoxLayout()
-        row.setContentsMargins(24, 20, 24, 20)
-        row.setSpacing(28)
-        outer.addLayout(row, stretch=1)
-
-        cover_wrap = QVBoxLayout()
-        cover_wrap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        row.addLayout(cover_wrap)
-
-        self._cover_btn = QPushButton("无封面")
+        row.setSpacing(26)
+        content.addLayout(row, stretch=1)
+        self._card_row = row
+        track = QWidget()
+        track.setObjectName("homeTrack")
+        track.setStyleSheet("#homeTrack { background: transparent; }")
+        track_layout = QVBoxLayout(track)
+        track_layout.setContentsMargins(0, 0, 0, 0)
+        track_layout.setSpacing(8)
+        track_layout.addStretch()
+        self._cover_btn = QPushButton("选择封面")
         self._cover_btn.setObjectName("homeCover")
-        self._cover_btn.setFlat(True)
+        self._cover_btn.setToolTip("选择或更换封面")
         self._cover_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._cover_btn.setMinimumSize(self.COVER_MIN, self.COVER_MIN)
-        self._cover_btn.setMaximumSize(self.COVER_MAX, self.COVER_MAX)
-        self._cover_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
-        )
-
-        shadow = QGraphicsDropShadowEffect(self._cover_btn)
-        shadow.setBlurRadius(28)
-        shadow.setOffset(0, 6)
-        shadow.setColor(QColor(0, 0, 0, 45))
-        self._cover_btn.setGraphicsEffect(shadow)
-
         self._cover_btn.clicked.connect(self._on_browse_cover)
-        cover_wrap.addWidget(self._cover_btn)
+        track_layout.addWidget(self._cover_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._title = QLabel()
+        self._subtitle = QLabel()
+        for label in (self._title, self._subtitle):
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            track_layout.addWidget(label)
+        track_layout.addStretch()
+        self._track = track
+        row.addWidget(track)
 
-        self._restyle_cover()
-        theme_events.changed.connect(self._restyle_cover)
-
-        self._lyric_axis = LyricAxisWidget(main_window)
+        self._lyric_axis = LyricAxisWidget(main_window, card_palette(QImage(), QColor("#b38cc4")),
+                                           self._options.get("mode", "bilingual"))
         row.addWidget(self._lyric_axis, stretch=1)
-
-        self._mw.audio_manager.duration_changed.connect(self._load_cover)
-
+        self._mode_btn.clicked.connect(self._cycle_mode)
+        self._lyric_axis.mode_changed.connect(self._sync_actions)
+        self._mw.lrc_state.document_changed.connect(self._refresh_song_info)
+        self._mw.audio_manager.media_loaded.connect(self._load_cover)
+        self._mw.audio_manager.source_changed.connect(self._source_changed)
+        theme_events.changed.connect(self._restyle_card)
         self._load_cover()
 
     def set_lyric_axis_visible(self, visible: bool) -> None:
-        """Show/hide the scrollable lyrics axis."""
         self._lyric_axis.setVisible(visible)
+        self._mode_btn.setVisible(visible)
+        self._card_row.setStretch(0, int(not visible))
 
-    def _restyle_cover(self) -> None:
-        """Restyle the cover card from the live theme."""
+    def _cycle_mode(self) -> None:
+        self._lyric_axis.cycle_mode()
+        self._save_option("mode", self._lyric_axis.mode)
+
+    def _save_option(self, key: str, value: str) -> None:
+        self._options[key] = value
+        self._mw.config.set_home_card_options(self._options)
+
+    def _sync_actions(self) -> None:
+        axis = self._lyric_axis
+        mode = axis.mode if axis.has_translation else "original"
+        self._mode_btn.setText(axis.MODE_LABELS[mode])
+        self._mode_btn.setEnabled(axis.has_translation)
+        self._share_btn.setEnabled(any(line.text.strip() or line.translation.strip()
+                                       for line in self._mw.lrc_state.lyric))
+
+    def _open_appearance(self) -> None:
+        menu = QMenu(self)
+        for key, title, values in (("style", "配色", self._STYLES), ("tone", "明暗", self._TONES)):
+            group = menu.addMenu(title)
+            for value, label in values.items():
+                action = group.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(value == self._options.get(key, next(iter(values))))
+                action.setData((key, value))
+        action = menu.exec(self._appearance_btn.mapToGlobal(self._appearance_btn.rect().bottomLeft()))
+        if action is not None and action.data():
+            self._save_option(*action.data())
+            self._restyle_card()
+
+    def _song_info(self) -> tuple[str, str, str]:
+        info = self._mw.lrc_state.info
+        audio_path = self._mw.audio_manager.local_path
+        title = info.get("ti") or self._audio_tags.get("title")
+        title = title or os.path.splitext(os.path.basename(audio_path))[0] or "未加载歌曲"
+        return title, info.get("ar") or self._audio_tags.get("artist", ""), info.get("al") or self._audio_tags.get("album", "")
+
+    def _refresh_song_info(self) -> None:
+        title, artist, album = self._song_info()
+        for label, text in ((self._title, title), (self._subtitle, " · ".join(filter(None, (artist, album))))):
+            label.setToolTip(text)
+            label.setText(QFontMetrics(label.font()).elidedText(text, Qt.TextElideMode.ElideRight,
+                                                               self._track.width()))
+        self._sync_actions()
+
+    def _open_share(self) -> None:
+        from .lyric_share_dialog import LyricShareDialog
+
+        title, artist, album = self._song_info()
+        audio = self._mw.audio_manager
+        lines = list(self._mw.lrc_state.lyric)
+        index = max((i for i, line in enumerate(lines) if line.time is not None and line.time <= audio.current_time),
+                    key=lambda i: (lines[i].time, i), default=self._mw.lrc_state.select_index)
+        dialog = LyricShareDialog(title=title, artist=artist, album=album, cover=self._cover_image,
+                                  lines=lines, current_index=index,
+                                  progress=audio.current_time / audio.duration if audio.duration else 0,
+                                  config=self._mw.config, parent=self)
+        dialog.exec()
+        dialog.deleteLater()
+
+    def _source_changed(self, url: str) -> None:
+        if url != self._mw.audio_manager.src:
+            self._audio_tags = {}
+            self._show_placeholder()
+
+    def _restyle_card(self) -> None:
         _bg, _fg, theme, dark = get_theme_colors()
-        surface = "#1a1e24" if dark else "#ffffff"
-        muted = "#9aa1ab" if dark else "#8a9099"
-        border = "rgba(255,255,255,0.14)" if dark else "rgba(0,0,0,0.10)"
+        tone = self._options.get("tone", "auto")
+        if self._cover_image.isNull() and tone == "auto":
+            tone = "dark" if dark else "light"
+        style = self._options.get("style", "faithful")
+        palette = card_palette(self._cover_image, QColor(theme), style=style, tone=tone)
+        self._surface.base = palette.background
+        self._surface.accent = palette.accent
+        self._surface.update()
+        self._lyric_axis.set_card_palette(palette)
+        base, text, accent = palette.background.name(), palette.text.name(), palette.accent.name()
+        border = mix(palette.background, palette.text, 0.20).name()
         self._cover_btn.setStyleSheet(f"""
-            QPushButton#homeCover {{
-                border: 1px solid {border};
-                border-radius: {self.COVER_RADIUS}px;
-                background-color: {surface};
-                font-size: 13px;
-                color: {muted};
-            }}
-            QPushButton#homeCover:hover {{
-                border: 1px solid {theme};
-                background-color: {surface};
-            }}
+            QPushButton#homeCover {{ border: 1px solid {border}; border-radius: 13px;
+                background: {base}; color: {text}; }}
+            QPushButton#homeCover:hover {{ border-color: {accent}; }}
         """)
+        self._title.setStyleSheet(f"color: {text}; font-size: 22px; font-weight: 700; background: transparent;")
+        self._subtitle.setStyleSheet(f"color: {palette.secondary.name()}; font-size: 13px; background: transparent;")
+        hover = mix(palette.background, palette.accent, 0.14).name()
+        for button in self._action_buttons:
+            button.setStyleSheet(f"""
+                QPushButton {{ border: 1px solid {border}; border-radius: 13px;
+                    padding: 5px 12px; color: {text}; background: {base}; }}
+                QPushButton:hover {{ border-color: {accent}; background: {hover}; }}
+                QPushButton:disabled {{ color: {palette.secondary.name()}; }}
+            """)
+        self._refresh_song_info()
 
     def _load_cover(self) -> None:
         """Read embedded cover art from the audio file using mutagen."""
         path = self._mw.audio_manager.local_path
-        if not path or not os.path.isfile(path):
+        self._audio_tags = _read_tags(path) if path else {}
+        if not path:
             self._show_placeholder()
             return
 
@@ -274,41 +400,51 @@ class HomePage(QWidget):
             self._show_placeholder()
             return
 
-        pix = QPixmap()
-        if not pix.loadFromData(self._cover_data):
+        self._cover_image = QImage.fromData(self._cover_data)
+        if self._cover_image.isNull():
             self._show_placeholder()
             return
+        self._surface.art = soft_cover(self._cover_image, 2)
+        self._paint_cover_icon()
+        self._restyle_card()
 
-        size = self._cover_btn.width()
-        if size <= 0:
-            size = self.COVER_MIN
-
-        mode = (
-            Qt.AspectRatioMode.IgnoreAspectRatio
-            if pix.width() == pix.height()
-            else Qt.AspectRatioMode.KeepAspectRatio
-        )
-        scaled = pix.scaled(
-            size, size, mode, Qt.TransformationMode.SmoothTransformation
-        )
-        self._cover_btn.setIcon(QIcon(scaled))
-        self._cover_btn.setIconSize(self._cover_btn.size())
+    def _paint_cover_icon(self) -> None:
+        if self._cover_image.isNull():
+            return
+        size = self._cover_btn.size()
+        ratio = self.devicePixelRatioF()
+        pixmap = QPixmap(size * ratio)
+        pixmap.setDevicePixelRatio(ratio)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        bounds = QRectF(0, 0, size.width(), size.height())
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        outline = QPainterPath()
+        outline.addRoundedRect(bounds, 13, 13)
+        painter.setClipPath(outline)
+        draw_cover(painter, bounds, self._cover_image)
+        painter.end()
+        self._cover_btn.setIcon(QIcon(pixmap))
+        self._cover_btn.setIconSize(size)
         self._cover_btn.setText("")
 
     def _show_placeholder(self) -> None:
         """Reset cover to placeholder state."""
         self._cover_data = None
         self._cover_mime = ""
+        self._cover_image = QImage()
+        self._surface.art = QImage()
         self._cover_btn.setIcon(QIcon())
-        self._cover_btn.setText("无封面")
+        self._cover_btn.setText("选择封面")
+        self._restyle_card()
 
     def resizeEvent(self, event) -> None:
-        """Keep cover square and re-scale icon on resize."""
+        """Keep enough room for the lyric column on a narrow window."""
         super().resizeEvent(event)
-        avail_h = self.height() - 40
-        avail_w = self.width() - 24 * 2 - 28
-        side = max(self.COVER_MIN, min(self.COVER_MAX, avail_h, avail_w))
+        width = max(136, min(390, int(self.width() * 0.36)))
+        side = max(112, min(width, self.height() - 142))
+        self._track.setFixedWidth(width)
         self._cover_btn.setFixedSize(side, side)
-
-        if self._cover_data:
-            self._update_cover_icon()
+        self._paint_cover_icon()
+        self._refresh_song_info()

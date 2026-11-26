@@ -1,378 +1,217 @@
-"""Scrollable lyrics axis with a floating display-mode toggle."""
+"""Playback-driven bilingual typography on the home card."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+from bisect import bisect_right
+from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
-    QLabel,
-    QPushButton,
-    QScrollArea,
-    QScrollBar,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from .content_stack import get_theme_colors, theme_events
+from .lyric_card_style import CardPalette, mix
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-SPACING = 4
-FONT_ACTIVE_SIZE = 16
-FONT_NORMAL_SIZE = 13
-
-
-def _blend(hex_a: str, hex_b: str, weight: float) -> str:
-    """Mix two hex colours; weight 1.0 gives *hex_a*, 0.0 gives *hex_b*."""
-    hex_a, hex_b = hex_a.lstrip("#"), hex_b.lstrip("#")
-    ra, ga, ba = int(hex_a[0:2], 16), int(hex_a[2:4], 16), int(hex_a[4:6], 16)
-    rb, gb, bb = int(hex_b[0:2], 16), int(hex_b[2:4], 16), int(hex_b[4:6], 16)
-    return "#{:02x}{:02x}{:02x}".format(
-        int(ra * weight + rb * (1 - weight)),
-        int(ga * weight + gb * (1 - weight)),
-        int(ba * weight + bb * (1 - weight)),
-    )
-
-
-class LyricItemWidget(QPushButton):
-    """One lyric line — inherits QPushButton for reliable click and hover."""
-
-    timestamp_clicked = pyqtSignal(float)
-
-    def __init__(
-        self,
-        timestamp: float | None,
-        text: str,
-        translation: str,
-        mode: str = "original",
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._timestamp = timestamp
-        self._text = text or ""
-        self._translation = translation or ""
-
+class _LyricRow(QPushButton):
+    def __init__(self, text: str, translation: str) -> None:
+        super().__init__()
+        self.setObjectName("cardLyricRow")
         self.setFlat(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-
-        _bg, _fg, _theme, _dark = get_theme_colors()
-        hover_border = _blend(_theme, _bg, 0.22)
-        hover_bg = _blend(_theme, _bg, 0.08)
-
-        self.clicked.connect(self._emit_timestamp)
-
-        self.setStyleSheet(f"""
-            LyricItemWidget {{
-                border: 1px solid transparent;
-                background: transparent;
-                border-radius: 8px;
-                text-align: left;
-            }}
-            LyricItemWidget:hover {{
-                border: 1px solid {hover_border};
-                background-color: {hover_bg};
-            }}
-        """)
-
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(text or translation)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(1)
+        layout.setContentsMargins(12, 7, 12, 7)
+        layout.setSpacing(4)
+        self.original = self._label(text)
+        self.translation = self._label(translation)
+        layout.addWidget(self.original)
+        layout.addWidget(self.translation)
 
-        self._orig_lbl = QLabel(self._text)
-        self._orig_lbl.setWordWrap(True)
-        self._orig_lbl.setFont(QFont("Microsoft YaHei", FONT_NORMAL_SIZE))
-        self._orig_lbl.setStyleSheet(
-            f"color: {_blend(_fg, _bg, 0.60)}; background: transparent;"
-        )
-
-        self._trans_lbl = QLabel(self._translation)
-        self._trans_lbl.setWordWrap(True)
-        self._trans_lbl.setFont(QFont("Microsoft YaHei", FONT_NORMAL_SIZE - 1))
-        self._trans_lbl.setStyleSheet(
-            f"color: {_blend(_fg, _bg, 0.38)}; background: transparent;"
-        )
-
-        layout.addWidget(self._orig_lbl)
-        layout.addWidget(self._trans_lbl)
-
-        self.set_mode(mode)
-
-    def _emit_timestamp(self) -> None:
-        if self._timestamp is not None:
-            self.timestamp_clicked.emit(self._timestamp)
-
-    def sizeHint(self) -> QSize:
-        return self.layout().sizeHint()
-
-    def minimumSizeHint(self) -> QSize:
-        return self.layout().minimumSize()
-
-    @property
-    def timestamp(self) -> float | None:
-        return self._timestamp
+    @staticmethod
+    def _label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setWordWrap(True)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        return label
 
     def set_mode(self, mode: str) -> None:
-        fallback = self._text
-        if mode == "original":
-            self._orig_lbl.show()
-            self._trans_lbl.hide()
-        elif mode == "translation":
-            self._orig_lbl.hide()
-            self._trans_lbl.setText(self._translation or fallback)
-            self._trans_lbl.show()
-        else:
-            self._orig_lbl.show()
-            self._trans_lbl.setText(self._translation or fallback)
-            self._trans_lbl.show()
+        has_translation = bool(self.translation.text())
+        self.original.setVisible(mode != "translation" or not has_translation)
+        self.translation.setVisible(mode != "original" and has_translation)
 
-    def set_active(self, active: bool) -> None:
-        _bg, _fg, theme, _dark = get_theme_colors()
-        if active:
-            self._orig_lbl.setStyleSheet(
-                f"color: {theme}; font-weight: bold;"
-                f" font-size: {FONT_ACTIVE_SIZE}px; background: transparent;"
-            )
-            self._trans_lbl.setStyleSheet(
-                f"color: {theme};"
-                f" font-size: {FONT_ACTIVE_SIZE - 1}px; background: transparent;"
-            )
-        else:
-            self._orig_lbl.setStyleSheet(
-                f"color: {_blend(_fg, _bg, 0.60)}; font-weight: normal;"
-                f" font-size: {FONT_NORMAL_SIZE}px; background: transparent;"
-            )
-            self._trans_lbl.setStyleSheet(
-                f"color: {_blend(_fg, _bg, 0.38)}; font-weight: normal;"
-                f" font-size: {FONT_NORMAL_SIZE - 1}px; background: transparent;"
-            )
+    def restyle(self, palette: CardPalette, active: bool) -> None:
+        original = palette.text if active else mix(palette.text, palette.background, 0.30)
+        translation = palette.secondary if active else mix(palette.secondary, palette.background, 0.20)
+        self.original.setStyleSheet(
+            f"color: {original.name()}; background: transparent; font-size: 22px; font-weight: 600;"
+        )
+        self.translation.setStyleSheet(
+            f"color: {translation.name()}; background: transparent; font-size: 15px; font-weight: 400;"
+        )
+        tint = mix(palette.background, palette.accent, 0.24).name()
+        self.setStyleSheet(
+            "QPushButton#cardLyricRow { border: 1px solid transparent;"
+            " border-radius: 10px; background: transparent; }"
+            f"QPushButton#cardLyricRow:hover {{ border-color: {tint}; }}"
+            + (f"QPushButton#cardLyricRow {{ border-left: 3px solid {palette.accent.name()}; }}" if active else "")
+        )
 
 
 class LyricAxisWidget(QScrollArea):
-    """Interactive, scrollable lyrics axis driven by the playback position."""
+    """Scroll without seeking. Clicking a lyric seeks to its timestamp."""
 
-    MODES = ["original", "translation", "bilingual"]
+    mode_changed = pyqtSignal()
+    MODES = ("original", "translation", "bilingual")
     MODE_LABELS = {"original": "原文", "translation": "翻译", "bilingual": "双语"}
 
-    def __init__(self, main_window: "MainWindow") -> None:
-        super().__init__(parent=None)
+    def __init__(self, main_window: MainWindow, palette: CardPalette, mode: str = "bilingual") -> None:
+        super().__init__()
         self._mw = main_window
+        self._palette = palette
+        self.mode = mode if mode in self.MODES else "bilingual"
+        self.has_translation = False
+        self._items: list[_LyricRow] = []
+        self._timeline: list[tuple[float, int]] = []
+        self._current_idx = -1
 
-        self._mode: str = "original"
-        self._items: List[LyricItemWidget] = []
-        self._current_idx: int = -1
-        self._programmatic: bool = False
-        self._user_set_mode: bool = False
-
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setWidgetResizable(True)
-        self.setFrameShape(QScrollArea.Shape.NoFrame)
-
-        container = QWidget()
-        self._layout = QVBoxLayout(container)
+        self.setObjectName("cardLyrics")
+        self.viewport().setAutoFillBackground(False)
+        body = QWidget()
+        body.setObjectName("cardLyricsBody")
+        self.setStyleSheet("#cardLyrics, #cardLyricsBody { background: transparent; border: none; }")
+        self._layout = QVBoxLayout(body)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(SPACING)
-
-        self._top_spacer = QWidget()
-        self._layout.addWidget(self._top_spacer)
-
-        self._empty_label = QLabel(
-            "此音乐暂无 LRC\n\n"
-            "你要去「歌词制作」页面创建吗？"
-        )
-        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setWordWrap(True)
-        self._layout.addWidget(self._empty_label)
-        self._empty_label.hide()
-
-        self._bottom_spacer = QWidget()
-        self._layout.addWidget(self._bottom_spacer)
-
-        self.setWidget(container)
-
-        self._mode_btn = QPushButton(self.MODE_LABELS[self._mode], self)
-        self._mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._mode_btn.clicked.connect(self._cycle_mode)
-
+        self._layout.setSpacing(8)
+        self._top = QWidget()
+        self._bottom = QWidget()
+        self._empty = QLabel("暂无同步歌词")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._top)
+        self._layout.addWidget(self._empty, stretch=1)
+        self._layout.addWidget(self._bottom)
+        self.setWidget(body)
+        body.setAutoFillBackground(False)
+        self._scroll = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self._scroll.setDuration(210)
+        self._scroll.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._align = QTimer(self)
+        self._align.setSingleShot(True)
+        self._align.timeout.connect(self._align_to_current)
+        self._follow = QTimer(self)
+        self._follow.setSingleShot(True)
+        self._follow.timeout.connect(lambda: self._scroll_to_current(True))
+        self.verticalScrollBar().rangeChanged.connect(self._on_range_changed)
         self._mw.lrc_state.document_changed.connect(self._rebuild)
         self._mw.audio_manager.current_time_changed.connect(self._on_time)
-        theme_events.changed.connect(self._on_theme_changed)
-
-        self._restyle_chrome()
         self._rebuild()
 
-    def has_lyrics(self) -> bool:
-        return len(self._items) > 0
-
-    def _restyle_chrome(self) -> None:
-        """Re-apply theme colors to the mode button and empty label."""
-        _b, _f, _t, _d = get_theme_colors()
-        self._empty_label.setStyleSheet(
-            f"color: {_blend(_f, _b, 0.38)}; font-size: 15px; padding: 40px;"
-        )
-
-        btn_bg = _blend(_f, _b, 0.12)
-        btn_bg_hover = _blend(_f, _b, 0.20)
-        btn_border = _blend(_f, _b, 0.30)
-        self._mode_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: {btn_bg}; color: {_blend(_f, _b, 0.70)};"
-            f"  border: 1px solid {btn_border}; border-radius: 6px;"
-            f"  padding: 3px 10px; font-size: 12px;"
-            f"}}"
-            f"QPushButton:hover {{ background: {btn_bg_hover}; }}"
-        )
-
-    def _on_theme_changed(self) -> None:
-        """Rebuild rows and chrome when the user switches theme."""
-        self._restyle_chrome()
-        self._rebuild()
+    def set_card_palette(self, palette: CardPalette) -> None:
+        self._palette = palette
+        self._empty.setStyleSheet(f"color: {palette.secondary.name()}; background: transparent; font-size: 16px;")
+        for index, row in enumerate(self._items):
+            row.restyle(palette, index == self._current_idx)
 
     def _rebuild(self) -> None:
-        self._programmatic = True
-        try:
-            for item in self._items:
-                item.timestamp_clicked.disconnect()
-                self._layout.removeWidget(item)
-                item.deleteLater()
-            self._items.clear()
-            self._current_idx = -1
+        self._scroll.stop()
+        for item in self._items:
+            self._layout.removeWidget(item)
+            item.hide()
+            item.deleteLater()
+        self._items.clear()
+        self._timeline.clear()
+        self._current_idx = -1
+        for line in self._mw.lrc_state.lyric:
+            if line.time is None:
+                continue
+            row = _LyricRow(line.text, line.translation)
+            row.clicked.connect(lambda checked=False, ts=line.time: self._seek(ts))
+            self._timeline.append((line.time, len(self._items)))
+            self._items.append(row)
+            self._layout.insertWidget(self._layout.count() - 1, row)
+        self._timeline.sort()
+        self.has_translation = any(row.translation.text() for row in self._items)
+        self._empty.setVisible(not self._items)
+        self._update_spacers()
+        self._apply_mode()
+        self.set_card_palette(self._palette)
+        self._align.start(0)
 
-            for line in self._mw.lrc_state.lyric:
-                if line.time is None:
-                    continue
-                item = LyricItemWidget(
-                    timestamp=line.time,
-                    text=line.text,
-                    translation=line.translation,
-                    mode=self._mode,
-                )
-                item.timestamp_clicked.connect(self._on_item_clicked)
-                self._items.append(item)
-                self._layout.insertWidget(
-                    self._layout.count() - 1, item,
-                )
-
-            if not self._items:
-                self._empty_label.show()
-                self._mode_btn.hide()
-                return
-
-            self._empty_label.hide()
-            self._mode_btn.show()
-
-            has_trans = any(
-                item._translation for item in self._items
-            )
-            if not has_trans:
-                self._mode = "original"
-                self._mode_btn.setText(self.MODE_LABELS[self._mode])
-            elif not self._user_set_mode and self._mode == "original":
-                self._mode = "bilingual"
-                self._mode_btn.setText(self.MODE_LABELS[self._mode])
-            for item in self._items:
-                item.set_mode(self._mode)
-
-            self._update_spacers()
-            self.widget().updateGeometry()
-        finally:
-            self._programmatic = False
-
-        QTimer.singleShot(0, lambda: self._on_time(
-            self._mw.audio_manager.current_time
-        ))
-
-    def _cycle_mode(self) -> None:
-        """Cycle 原文 → 翻译 → 双语; a no-op while no lyric has a translation."""
-        has_trans = any(item._translation for item in self._items)
-        if not has_trans:
-            return
-
-        self._user_set_mode = True
-        self._programmatic = True
-        try:
-            idx = self.MODES.index(self._mode)
-            self._mode = self.MODES[(idx + 1) % len(self.MODES)]
-            self._mode_btn.setText(self.MODE_LABELS[self._mode])
-            for item in self._items:
-                item.set_mode(self._mode)
-            self._update_spacers()
-            self.widget().updateGeometry()
-        finally:
-            self._programmatic = False
-        QTimer.singleShot(0, lambda: self._on_time(
-            self._mw.audio_manager.current_time
-        ))
-
-    def _on_time(self, audio_time: float) -> None:
-        idx = self._find_index(audio_time)
-        if idx == self._current_idx:
-            return
-
-        if 0 <= self._current_idx < len(self._items):
-            self._items[self._current_idx].set_active(False)
-        self._current_idx = idx
-        if idx < 0 or idx >= len(self._items):
-            return
-        self._items[idx].set_active(True)
-
-        self._scroll_to_item(idx)
-
-    def _find_index(self, audio_time: float) -> int:
-        best = -1
-        for i, item in enumerate(self._items):
-            ts = item.timestamp
-            if ts is not None and ts <= audio_time:
-                best = i
-        return best
-
-    def _scroll_to_item(self, idx: int) -> None:
-        item = self._items[idx]
-        item_y = item.mapTo(self.widget(), QPoint(0, 0)).y()
-        item_h = item.height()
-        view_h = self.viewport().height()
-        if view_h <= 0:
-            return
-
-        target = item_y + item_h // 2 - view_h // 2
-        vbar = self.verticalScrollBar()
-        target = max(vbar.minimum(), min(vbar.maximum(), target))
-
-        self._programmatic = True
-        vbar.setValue(target)
-        self._programmatic = False
-
-    def _on_item_clicked(self, timestamp: float) -> None:
-        """Seek the audio to the clicked lyric's timestamp."""
+    def _seek(self, timestamp: float) -> None:
         self._mw.audio_manager.current_time = timestamp
+        self._align.start(0)
+
+    def cycle_mode(self) -> None:
+        if not self.has_translation:
+            return
+        self.mode = self.MODES[(self.MODES.index(self.mode) + 1) % len(self.MODES)]
+        self._apply_mode()
+        self._align.start(0)
+
+    def _apply_mode(self) -> None:
+        for row in self._items:
+            row.set_mode(self.mode)
+        self.mode_changed.emit()
+
+    def _index_at(self, seconds: float) -> int:
+        slot = bisect_right(self._timeline, (seconds, len(self._items))) - 1
+        return self._timeline[slot][1] if slot >= 0 else -1
+
+    def _on_time(self, seconds: float, *, animate: bool = True) -> None:
+        index = self._index_at(seconds)
+        if index == self._current_idx:
+            return
+        if self._current_idx >= 0:
+            self._items[self._current_idx].restyle(self._palette, False)
+        self._current_idx = index
+        if index >= 0:
+            self._items[index].restyle(self._palette, True)
+        if animate:
+            self._follow.start(0)
+        else:
+            self._scroll_to_current(False)
+
+    def _on_range_changed(self, _minimum: int, _maximum: int) -> None:
+        # Newly inserted rows can receive their final geometry after the first timer.
+        self._align.start(0)
+
+    def _align_to_current(self) -> None:
+        self._on_time(self._mw.audio_manager.current_time, animate=False)
+        self._scroll_to_current(False)
+
+    def _scroll_to_current(self, animate: bool) -> None:
+        self._layout.activate()
+        bar = self.verticalScrollBar()
+        target = 0
+        if self._items:
+            row = self._items[max(0, self._current_idx)]
+            target = max(0, min(bar.maximum(), row.y() + (row.height() - self.viewport().height()) // 2))
+        self._scroll.stop()
+        if animate and bar.value() != target:
+            self._scroll.setStartValue(bar.value())
+            self._scroll.setEndValue(target)
+            self._scroll.start()
+        else:
+            bar.setValue(target)
+
+    def wheelEvent(self, event) -> None:
+        self._scroll.stop()
+        super().wheelEvent(event)
 
     def _update_spacers(self) -> None:
-        vh = self.viewport().height()
-        half = max(0, vh // 2)
-        self._top_spacer.setFixedHeight(half)
-        self._bottom_spacer.setFixedHeight(half)
+        gutter = self.viewport().height() // 2 if self._items else 0
+        self._top.setFixedHeight(gutter)
+        self._bottom.setFixedHeight(gutter)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._programmatic = True
-        try:
-            self._update_spacers()
-            btn_w = self._mode_btn.sizeHint().width()
-            btn_h = self._mode_btn.sizeHint().height()
-            self._mode_btn.setGeometry(
-                self.viewport().width() - btn_w - 8, 8, btn_w, btn_h,
-            )
-            if 0 <= self._current_idx < len(self._items):
-                self._scroll_to_item(self._current_idx)
-        finally:
-            self._programmatic = False
+        self._update_spacers()
+        self._align.start(0)

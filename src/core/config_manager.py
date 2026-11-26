@@ -56,6 +56,22 @@ class ConfigManager:
         cfg["preferences"] = data
         self._save_config()
 
+    def get_home_card_options(self) -> Dict[str, Any]:
+        options = self._load_config().get("homeLyricCard", {})
+        return dict(options) if isinstance(options, dict) else {}
+
+    def set_home_card_options(self, options: Dict[str, Any]) -> None:
+        self._load_config()["homeLyricCard"] = dict(options)
+        self._save_config()
+
+    def get_lyric_share_options(self) -> Dict[str, Any]:
+        options = self._load_config().get("lyricShare", {})
+        return dict(options) if isinstance(options, dict) else {}
+
+    def set_lyric_share_options(self, options: Dict[str, Any]) -> None:
+        self._load_config()["lyricShare"] = dict(options)
+        self._save_config()
+
     def get_lyric(self) -> str:
         """Read the draft file from AppData, or an empty string when absent."""
         try:
